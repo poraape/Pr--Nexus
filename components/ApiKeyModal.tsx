@@ -1,8 +1,7 @@
 import React from 'react';
 
-// This component is a placeholder. As per project guidelines, the API key is
-// managed via environment variables (process.env.API_KEY) and no UI should
-// be presented to the user for key management.
+// Este componente permanece como placeholder; a gestão de chaves de API é
+// realizada no backend e não deve ser exposta na interface.
 const ApiKeyModal: React.FC = () => {
   return null; // Render nothing
 };

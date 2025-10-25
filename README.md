@@ -31,9 +31,17 @@ A implementação atual é uma demonstração poderosa de uma arquitetura totalm
 A aplicação é uma SPA desenvolvida com **React** e **TypeScript**, utilizando **TailwindCSS** para estilização. Ela é responsável por:
 *   Fornecer uma interface de usuário rica e interativa.
 *   Executar o pipeline de agentes simulado no lado do cliente (`useAgentOrchestrator`).
-*   Interagir **diretamente com a Google Gemini API** para capacidades de IA generativa (análise, chat, busca).
+*   Enviar requisições para o backend para tarefas de IA (RAG, chat e análises avançadas), mantendo as chaves de API fora do navegador.
 *   Utilizar bibliotecas como Tesseract.js e PDF.js (com Web Workers) para processamento pesado de arquivos em background sem travar a UI.
 *   Renderizar dashboards, relatórios e o assistente de chat.
+
+### Backend (Novo serviço)
+
+Um serviço **FastAPI** centraliza o acesso aos modelos generativos e ao mecanismo de RAG:
+*   Indexação de relatórios fiscais em um **ChromaDB** persistente para consultas posteriores.
+*   Respostas do chat consultivo combinando recuperação (RAG) e modelos Gemini/DeepSeek, com suporte a **streaming via SSE**.
+*   Endpoint genérico `/api/v1/llm/generate-json` para demais agentes solicitarem respostas em JSON, preservando o schema definido no frontend.
+*   Toda a configuração sensível de chaves (ex.: `GEMINI_API_KEY`) fica restrita às variáveis de ambiente do backend.
 
 ---
 
@@ -80,32 +88,54 @@ O projeto adere a um rigoroso padrão de qualidade, imposto por automação no p
 1. Clique no botão "Run" ou "Executar".
 2. Uma nova aba será aberta com a aplicação em funcionamento.
 
-### Localmente
-1. **Clone o repositório.**
-2. **Configure as Variáveis de Ambiente:** Crie um arquivo `.env.local` na raiz e adicione `VITE_API_KEY=SUA_API_KEY_AQUI`.
-3. **Inicie o Servidor de Desenvolvimento (ex: com Vite):**
+### Backend
+1. **Instale as dependências Python:**
    ```bash
-   # Instale as dependências (se houver um package.json)
+   pip install -r backend/requirements.txt
+   ```
+2. **Configure as variáveis de ambiente:** crie um arquivo `.env` na pasta `backend/` ou exporte diretamente as seguintes chaves:
+   ```env
+   GEMINI_API_KEY="sua-chave-do-gemini"
+   # Opcional: altere o diretório do ChromaDB ou utilize DeepSeek definindo LLM_PROVIDER=deepseek e DEEPSEEK_API_KEY.
+   ```
+3. **Inicie o servidor FastAPI:**
+   ```bash
+   uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+   ```
+4. **Verifique a saúde da API:** `http://localhost:8000/health`.
+
+### Frontend
+1. **Clone o repositório.**
+2. **Configure as variáveis do Vite:** crie um arquivo `.env.local` na raiz contendo, no mínimo:
+   ```env
+   VITE_BACKEND_URL="http://localhost:8000"
+   ```
+3. **Instale as dependências e inicie o servidor de desenvolvimento:**
+   ```bash
    npm install
-   # Inicie o servidor
    npm run dev
    ```
-4. Acesse a URL fornecida (geralmente `http://localhost:5173`).
+4. Acesse a URL fornecida (geralmente `http://localhost:5173`). O frontend comunicará o backend para realizar buscas, gerar insights e responder ao chat.
 
 ---
 
-## 📁 Estrutura de Pastas (Frontend)
+## 📁 Estrutura de Pastas
 
 ```
 /
-├── src/
-│   ├── agents/            # Lógica de negócios de cada agente IA
-│   ├── components/        # Componentes React reutilizáveis
-│   ├── hooks/             # Hooks React customizados (ex: useAgentOrchestrator)
-│   ├── services/          # Serviços (chamadas à API Gemini, logger)
-│   ├── utils/             # Funções utilitárias (parsers, exportação, regras)
-│   ├── App.tsx            # Componente principal da aplicação
-│   └── types.ts           # Definições de tipos TypeScript
+├── backend/
+│   ├── agents/            # Agentes e lógica de RAG (ConsultantAgent)
+│   ├── api/               # Endpoints FastAPI (chat e LLM genérico)
+│   ├── core/              # Configuração (variáveis de ambiente)
+│   ├── services/          # Cliente LLM compartilhado (Gemini/DeepSeek)
+│   ├── main.py            # Ponto de entrada FastAPI
+│   └── requirements.txt   # Dependências Python
+├── agents/                # Agentes executados no frontend
+├── components/            # Componentes React reutilizáveis
+├── hooks/                 # Hooks React customizados (ex: useAgentOrchestrator)
+├── services/              # Serviços (requisições ao backend, logger)
+├── utils/                 # Funções utilitárias (parsers, exportação, regras)
+├── App.tsx                # Componente principal da aplicação
 ├── index.html             # Arquivo HTML principal
 └── README.md              # Este arquivo
 ```

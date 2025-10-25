@@ -4,9 +4,8 @@ import { runAudit } from '../agents/auditorAgent';
 import { runClassification } from '../agents/classifierAgent';
 import { runIntelligenceAnalysis } from '../agents/intelligenceAgent';
 import { runAccountingAnalysis } from '../agents/accountantAgent';
-import { startChat, sendMessageStream } from '../services/chatService';
+import { initializeConsultantSession, sendChatMessage, streamChatMessage, type ConsultantHistoryItem } from '../services/chatService';
 import type { ChatMessage, ImportedDoc, AuditReport, ClassificationResult } from '../types';
-import type { Chat } from '@google/genai';
 import Papa from 'papaparse';
 import { logger } from '../services/logger';
 import { runDeterministicCrossValidation } from '../utils/fiscalCompare';
@@ -88,6 +87,28 @@ const getDetailedErrorMessage = (error: unknown): string => {
 };
 
 
+const extractTextPreviewFromJson = (raw: string): string => {
+    try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.text === 'string') {
+            return parsed.text;
+        }
+    } catch (_) {
+        // Ignore JSON parse errors for partial content.
+    }
+
+    const textMatch = raw.match(/"text"\s*:\s*"([\s\S]*)$/);
+    if (textMatch && textMatch[1]) {
+        return textMatch[1]
+            .replace(/"\s*,\s*"chartData[\s\S]*/g, '')
+            .replace(/\\n/g, '\n')
+            .replace(/\\"/g, '"');
+    }
+
+    return raw.replace(/\\n/g, '\n');
+};
+
+
 export const useAgentOrchestrator = () => {
     const [agentStates, setAgentStates] = useState<AgentStates>(initialAgentStates);
     const [auditReport, setAuditReport] = useState<AuditReport | null>(null);
@@ -98,8 +119,10 @@ export const useAgentOrchestrator = () => {
     const [isPipelineComplete, setIsPipelineComplete] = useState(false);
     const [classificationCorrections, setClassificationCorrections] = useState<ClassificationCorrections>({});
 
-    const chatRef = useRef<Chat | null>(null);
-    const streamController = useRef<AbortController | null>(null);
+    const consultantSessionIdRef = useRef<string | null>(null);
+    const consultantReadyRef = useRef<boolean>(false);
+    const streamController = useRef<{ close: () => void } | null>(null);
+    const streamingMessageIdRef = useRef<string | null>(null);
     
     // Load corrections from localStorage on initial mount
     useEffect(() => {
@@ -120,7 +143,13 @@ export const useAgentOrchestrator = () => {
         setPipelineError(false);
         setAuditReport(null);
         setMessages([]);
-        chatRef.current = null;
+        consultantSessionIdRef.current = null;
+        consultantReadyRef.current = false;
+        streamingMessageIdRef.current = null;
+        if (streamController.current) {
+            streamController.current.close();
+            streamController.current = null;
+        }
         setIsPipelineComplete(false);
     }, []);
 
@@ -199,15 +228,43 @@ export const useAgentOrchestrator = () => {
             const dataSampleForAI = Papa.unparse(validDocsData.slice(0, 200));
 
             // 7. Preparar para Chat
-            logger.log('ChatService', 'INFO', 'Iniciando sessão de chat com a IA.');
-            chatRef.current = startChat(dataSampleForAI, finalReport.aggregatedMetrics);
-            setMessages([
-                {
-                    id: 'initial-ai-message',
-                    sender: 'ai',
-                    text: 'Sua análise fiscal está pronta. Explore os detalhes abaixo ou me faça uma pergunta sobre os dados.',
-                },
-            ]);
+            logger.log('ChatService', 'INFO', 'Inicializando consultor fiscal no backend.');
+            const sessionId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+                ? crypto.randomUUID()
+                : `${Date.now()}`;
+            consultantSessionIdRef.current = sessionId;
+            try {
+                await initializeConsultantSession({
+                    sessionId,
+                    report: finalReport,
+                    metadata: {
+                        aggregated_metrics: finalReport.aggregatedMetrics ?? {},
+                        summary: finalReport.summary,
+                        data_sample: dataSampleForAI,
+                    },
+                });
+                consultantReadyRef.current = true;
+                setMessages([
+                    {
+                        id: 'initial-ai-message',
+                        sender: 'ai',
+                        text: 'Sua análise fiscal está pronta. Explore os detalhes abaixo ou me faça uma pergunta sobre os dados.',
+                    },
+                ]);
+                logger.log('ChatService', 'INFO', 'Consultor fiscal pronto para responder perguntas.');
+            } catch (initError) {
+                consultantReadyRef.current = false;
+                const message = getDetailedErrorMessage(initError);
+                logger.log('ChatService', 'ERROR', 'Falha ao preparar consultor fiscal no backend.', { error: initError });
+                setMessages([
+                    {
+                        id: 'initial-ai-message',
+                        sender: 'ai',
+                        text: 'Não foi possível preparar o consultor fiscal. Tente novamente após revisar a configuração.',
+                    },
+                ]);
+                setError(message);
+            }
 
         } catch (err: unknown) {
             console.error('Pipeline failed:', err);
@@ -225,58 +282,99 @@ export const useAgentOrchestrator = () => {
 
     const handleStopStreaming = useCallback(() => {
         if (streamController.current) {
-            streamController.current.abort();
+            streamController.current.close();
+            streamController.current = null;
             setIsStreaming(false);
+            const interruptedId = streamingMessageIdRef.current;
+            streamingMessageIdRef.current = null;
+            if (interruptedId) {
+                setMessages(prev => prev.map(m => m.id === interruptedId ? { ...m, text: 'Resposta interrompida pelo usuário.' } : m));
+            }
             logger.log('ChatService', 'WARN', 'Geração de resposta do chat interrompida pelo usuário.');
         }
     }, []);
     
     const handleSendMessage = useCallback(async (message: string) => {
-        if (!chatRef.current) {
-            setError('O chat não foi inicializado. Por favor, execute uma análise primeiro.');
+        if (!consultantReadyRef.current || !consultantSessionIdRef.current) {
+            setError('O consultor fiscal ainda não está pronto. Execute uma análise primeiro.');
             return;
         }
 
+        const sessionId = consultantSessionIdRef.current;
         const userMessage: ChatMessage = { id: Date.now().toString(), sender: 'user', text: message };
-        setMessages(prev => [...prev, userMessage]);
+        const aiMessageId = `${Date.now()}-ai`;
+        const history: ConsultantHistoryItem[] = [...messages, userMessage]
+            .filter(m => m.sender === 'user' || m.sender === 'ai')
+            .map(m => ({
+                role: m.sender === 'user' ? 'user' : 'assistant',
+                content: m.text,
+                chartData: m.chartData,
+            }));
+
+        setMessages(prev => [...prev, userMessage, { id: aiMessageId, sender: 'ai', text: '...' }]);
         setIsStreaming(true);
+        setError(null);
+        streamingMessageIdRef.current = aiMessageId;
 
-        const aiMessageId = (Date.now() + 1).toString();
-        let fullAiResponse = '';
-        setMessages(prev => [...prev, { id: aiMessageId, sender: 'ai', text: '...' }]);
+        const supportsStreaming = typeof EventSource !== 'undefined';
 
-        streamController.current = new AbortController();
-        const signal = streamController.current.signal;
-
-        try {
-            const stream = sendMessageStream(chatRef.current, message);
-            for await (const chunk of stream) {
-                if (signal.aborted) break;
-                fullAiResponse += chunk;
-                setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: fullAiResponse } : m));
+        if (!supportsStreaming) {
+            try {
+                const response = await sendChatMessage({ sessionId, question: message, history, stream: false });
+                setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: response.text, chartData: response.chartData ?? undefined } : m));
+            } catch (err) {
+                const errorMessage = getDetailedErrorMessage(err);
+                setError(errorMessage);
+                setMessages(prev => prev.filter(m => m.id !== aiMessageId));
+            } finally {
+                streamingMessageIdRef.current = null;
+                setIsStreaming(false);
             }
-
-            if (!signal.aborted) {
-                try {
-                    const finalJson = JSON.parse(fullAiResponse);
-                    setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, ...finalJson } : m));
-                } catch(parseError) {
-                     logger.log('ChatService', 'ERROR', 'Falha ao analisar a resposta JSON final da IA.', { error: parseError, response: fullAiResponse });
-                     const errorMessage = 'A IA retornou uma resposta em formato inválido. Por favor, tente novamente.';
-                     setError(errorMessage);
-                     setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: errorMessage } : m));
-                }
-            }
-
-        } catch (err: unknown) {
-            const finalMessage = getDetailedErrorMessage(err);
-            setError(finalMessage);
-            setMessages(prev => prev.filter(m => m.id !== aiMessageId)); // Remove placeholder
-        } finally {
-            setIsStreaming(false);
-            streamController.current = null;
+            return;
         }
-    }, [chatRef, messages]);
+
+        let fullResponse = '';
+        try {
+            const controller = streamChatMessage(
+                { sessionId, question: message, history },
+                {
+                    onChunk: (chunk) => {
+                        fullResponse += chunk;
+                        const preview = extractTextPreviewFromJson(fullResponse);
+                        setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: preview || '...' } : m));
+                    },
+                    onFinal: (finalMessage) => {
+                        streamingMessageIdRef.current = null;
+                        setMessages(prev => prev.map(m => m.id === aiMessageId ? {
+                            ...m,
+                            text: finalMessage.text,
+                            chartData: finalMessage.chartData ?? undefined,
+                        } : m));
+                        setIsStreaming(false);
+                        streamController.current = null;
+                    },
+                    onError: (messageError) => {
+                        streamingMessageIdRef.current = null;
+                        setError(messageError);
+                        setMessages(prev => prev.filter(m => m.id !== aiMessageId));
+                        setIsStreaming(false);
+                        streamController.current = null;
+                    },
+                }
+            );
+            streamController.current = controller;
+        } catch (err) {
+            streamingMessageIdRef.current = null;
+            const errorMessage = getDetailedErrorMessage(err);
+            setError(errorMessage);
+            setMessages(prev => prev.filter(m => m.id !== aiMessageId));
+            setIsStreaming(false);
+            if (streamController.current) {
+                streamController.current.close();
+                streamController.current = null;
+            }
+        }
+    }, [messages]);
 
     const handleClassificationChange = useCallback((docName: string, newClassification: ClassificationResult['operationType']) => {
         setAuditReport(prevReport => {
