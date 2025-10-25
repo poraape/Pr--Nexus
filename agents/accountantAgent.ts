@@ -1,8 +1,7 @@
-import { Type } from "@google/genai";
+import { generateJSON, Type } from "../services/geminiService";
 import type { AnalysisResult, AuditReport, AccountingEntry, AuditedDocument, SpedFile } from '../types';
 import { logger } from "../services/logger";
 import { parseSafeFloat } from "../utils/parsingUtils";
-import { generateJSON } from "../services/geminiService";
 
 const analysisResponseSchema = {
   type: Type.OBJECT,

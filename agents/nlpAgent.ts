@@ -1,7 +1,6 @@
 // nlpAgent.ts
-import { Type } from "@google/genai";
+import { generateJSON, Type } from "../services/geminiService";
 import { logger } from "../services/logger";
-import { generateJSON } from "../services/geminiService";
 
 const nlpExtractionSchema = {
   type: Type.OBJECT,

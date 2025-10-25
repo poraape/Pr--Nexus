@@ -158,7 +158,10 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ messages, onSendMessage, isStream
                   : 'bg-gray-700 text-gray-200 rounded-bl-none'
               }`}>
               <div className="prose prose-sm prose-invert max-w-none">
-                 {isStreaming && message.id === messages[messages.length - 1].id ? <LoadingSpinnerIcon className="w-5 h-5 animate-spin" /> : renderMessageContent(message)}
+                 {isStreaming && message.id === messages[messages.length - 1].id && (
+                    <LoadingSpinnerIcon className="w-5 h-5 animate-spin inline mr-2" />
+                 )}
+                 {renderMessageContent(message)}
               </div>
               {message.chartData && (
                 <div className="mt-4 bg-gray-800/50 p-4 rounded-md" data-chart-container="true">

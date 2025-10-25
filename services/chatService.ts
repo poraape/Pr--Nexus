@@ -1,69 +1,153 @@
-import { Type, Chat } from "@google/genai";
-import { createChatSession, streamChatMessage } from './geminiService';
+import type { AuditReport, ChartData } from "../types";
 
-const chatResponseSchema = {
-  type: Type.OBJECT,
-  properties: {
-    text: { type: Type.STRING, description: "Textual response to the user's query." },
-    chartData: {
-      type: Type.OBJECT,
-      description: "Optional: Chart data if the query can be visualized.",
-      properties: {
-        type: { type: Type.STRING, enum: ['bar', 'pie', 'line', 'scatter'], description: "Type of chart." },
-        title: { type: Type.STRING, description: "Title of the chart." },
-        data: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              label: { type: Type.STRING },
-              value: { type: Type.NUMBER },
-              x: { type: Type.NUMBER, nullable: true, description: "X-value for scatter plots." }
-            },
-            required: ['label', 'value'],
-          },
-        },
-        xAxisLabel: { type: Type.STRING, nullable: true },
-        yAxisLabel: { type: Type.STRING, nullable: true },
-      },
-      nullable: true,
-    },
-  },
-  required: ['text'],
-};
+type HistoryRole = "user" | "assistant";
 
-export const startChat = (dataSample: string, aggregatedMetrics?: Record<string, any>): Chat => {
-  const systemInstruction = `
-        You are an expert fiscal data analyst assistant.
-        The user has provided you with a data sample in CSV format, extracted from fiscal documents. The columns have been normalized.
-        
-        I have already performed deterministic calculations and can provide you with these aggregated totals as a source of truth:
-        ---
-        Aggregated Metrics:
-        ${JSON.stringify(aggregatedMetrics || { info: "Nenhuma métrica agregada calculada." }, null, 2)}
-        ---
+export interface ConsultantHistoryItem {
+  role: HistoryRole;
+  content: string;
+  chartData?: ChartData;
+}
 
-        Here is a small sample of the raw line-item data for more detailed queries:
-        ---
-        Data Sample:
-        ${dataSample}
-        ---
-        
-        Your primary goal is to help the user explore and understand this data. Follow these rules:
-        1.  Source of Truth: For questions about totals (e.g., "Qual o valor total?"), you MUST use the 'Aggregated Metrics' provided above. For detailed questions (e.g., "Qual o produto mais caro?"), use the 'Data Sample'.
-        2.  Ask for Clarification: If a request is vague, ask a clarifying question.
-        3.  Be Proactive: After answering, suggest a related analysis.
-        4.  Generate Visualizations: If a query can be visualized, you MUST provide the chart data. Otherwise, set 'chartData' to null. Include axis labels (xAxisLabel, yAxisLabel) where appropriate.
-        5.  Language and Format: Always respond in Brazilian Portuguese. Your entire response must be a single, valid JSON object, adhering to the required schema.
-    `;
+export interface ConsultantResponse {
+  text: string;
+  chartData?: ChartData | null;
+}
 
-  return createChatSession(
-    'gemini-2.5-flash',
-    systemInstruction,
-    chatResponseSchema
-  );
-};
+interface BaseChatPayload {
+  sessionId: string;
+  history?: ConsultantHistoryItem[];
+}
 
-export const sendMessageStream = (chat: Chat, message: string): AsyncGenerator<string> => {
-  return streamChatMessage(chat, message);
+export interface InitializeSessionPayload extends BaseChatPayload {
+  report: AuditReport;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ChatRequestPayload extends BaseChatPayload {
+  question: string;
+  stream?: boolean;
+}
+
+export interface StreamHandlers {
+  onChunk: (chunk: string) => void;
+  onFinal: (message: ConsultantResponse) => void;
+  onError: (message: string) => void;
+}
+
+const API_BASE_URL = (import.meta.env.VITE_BACKEND_URL || "").replace(/\/$/, "");
+
+const buildUrl = (path: string) => `${API_BASE_URL}${path}`;
+
+const toBody = (payload: Record<string, unknown>) =>
+  JSON.stringify(payload, (_key, value) => (value === undefined ? null : value));
+
+export async function initializeConsultantSession({
+  sessionId,
+  report,
+  metadata,
+  history,
+}: InitializeSessionPayload): Promise<void> {
+  const response = await fetch(buildUrl("/api/v1/chat"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: toBody({
+      session_id: sessionId,
+      report,
+      metadata,
+      history: history ?? [],
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await safeExtractError(response);
+    throw new Error(detail || "Falha ao inicializar o consultor fiscal.");
+  }
+}
+
+export async function sendChatMessage({
+  sessionId,
+  question,
+  history = [],
+  stream = false,
+}: ChatRequestPayload): Promise<ConsultantResponse> {
+  const response = await fetch(buildUrl("/api/v1/chat"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: toBody({
+      session_id: sessionId,
+      question,
+      history,
+      stream,
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await safeExtractError(response);
+    throw new Error(detail || "Falha ao solicitar resposta do consultor.");
+  }
+
+  const payload = await response.json();
+  return payload.message as ConsultantResponse;
+}
+
+export function streamChatMessage(
+  { sessionId, question, history = [] }: ChatRequestPayload,
+  handlers: StreamHandlers,
+): { close: () => void } {
+  const params = new URLSearchParams({
+    payload: JSON.stringify({
+      session_id: sessionId,
+      question,
+      history,
+      stream: true,
+    }),
+  });
+
+  const eventSource = new EventSource(`${buildUrl("/api/v1/chat")}?${params.toString()}`);
+
+  eventSource.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data) as
+        | { type: "chunk"; content: string }
+        | { type: "final"; message: ConsultantResponse }
+        | { type: "error"; message: string };
+
+      if (data.type === "chunk") {
+        handlers.onChunk(data.content);
+      } else if (data.type === "final") {
+        handlers.onFinal(data.message);
+        eventSource.close();
+      } else if (data.type === "error") {
+        handlers.onError(data.message || "Falha ao gerar resposta.");
+        eventSource.close();
+      }
+    } catch (err) {
+      handlers.onError("Resposta de streaming inválida do servidor.");
+      eventSource.close();
+    }
+  };
+
+  eventSource.onerror = () => {
+    handlers.onError("Conexão de streaming interrompida.");
+    eventSource.close();
+  };
+
+  return {
+    close: () => eventSource.close(),
+  };
+}
+
+async function safeExtractError(response: Response): Promise<string | null> {
+  try {
+    const payload = await response.json();
+    if (payload?.detail) {
+      if (typeof payload.detail === "string") return payload.detail;
+      if (Array.isArray(payload.detail) && payload.detail[0]?.msg) {
+        return payload.detail[0].msg as string;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }

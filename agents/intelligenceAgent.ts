@@ -1,8 +1,7 @@
-import { Type } from "@google/genai";
+import { generateJSON, Type } from "../services/geminiService";
 import type { AuditReport, AIDrivenInsight, CrossValidationResult } from '../types';
 import Papa from 'papaparse';
 import { logger } from "../services/logger";
-import { generateJSON } from "../services/geminiService";
 
 const intelligenceSchema = {
   type: Type.OBJECT,
