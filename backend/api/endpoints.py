@@ -1,21 +1,30 @@
-<<<<<<< HEAD
 from __future__ import annotations
 
 import json
 import logging
+import uuid
 from typing import Any, Dict, Iterable, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
+from sqlalchemy.orm import Session
 
 from backend.agents.consultant_agent import ConsultantAgent, ConsultantAgentError
 from backend.core.config import get_settings
+from backend.database import get_session
+from backend.database.models import Task
 from backend.services.llm_client import LLMClient, LLMClientError
+from backend.services.repositories import SQLAlchemyReportRepository, SQLAlchemyStatusRepository
+from backend.services.storage import FileStorage
+from backend.services.task_queue import InlineTaskPublisher, RabbitMQPublisher, TaskPublisher
+from backend.types import AgentPhase
+from backend.worker import AuditWorker
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1", tags=["consultant"])
+router = APIRouter(prefix="/api/v1")
+
 _settings = get_settings()
 
 try:
@@ -25,6 +34,19 @@ except LLMClientError as exc:  # pragma: no cover - hard failure
     raise
 
 _agent = ConsultantAgent(_settings, llm_client=_llm_client)
+_storage = FileStorage(_settings.storage_path)
+_status_repository = SQLAlchemyStatusRepository()
+_report_repository = SQLAlchemyReportRepository()
+_worker = AuditWorker(status_repository=_status_repository, report_repository=_report_repository, storage=_storage)
+
+if _settings.task_dispatch_mode == "rabbitmq":  # pragma: no cover - depends on infrastructure
+    try:
+        _publisher: TaskPublisher = RabbitMQPublisher(_settings.rabbitmq_url, queue=_settings.rabbitmq_queue)
+    except Exception:  # pragma: no cover - defensive
+        logger.exception("Failed to initialize RabbitMQ publisher, falling back to inline dispatcher")
+        _publisher = InlineTaskPublisher(_worker)
+else:
+    _publisher = InlineTaskPublisher(_worker)
 
 
 class HistoryMessage(BaseModel):
@@ -48,16 +70,63 @@ class GenerateJsonRequest(BaseModel):
     schema: Optional[Dict[str, Any]] = None
 
 
+class UploadResponse(BaseModel):
+    task_id: uuid.UUID
+    status: str
+
+
+class BackendAgentState(BaseModel):
+    status: str
+    progress: Optional[Dict[str, Any]] = None
+
+
+class StatusResponse(BaseModel):
+    task_id: uuid.UUID
+    status: str
+    progress: int
+    original_filename: Optional[str]
+    created_at: str
+    updated_at: str
+    message: Optional[str] = None
+    agents: Dict[str, BackendAgentState] = Field(default_factory=dict)
+
+
+class ReportResponse(BaseModel):
+    task_id: uuid.UUID
+    content: Dict[str, Any]
+    generated_at: str
+
+
+class ClassificationUpdate(BaseModel):
+    document_name: str = Field(..., alias="documentName")
+    operation_type: str = Field(..., alias="operationType")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 def _format_history(history: List[HistoryMessage]) -> List[Dict[str, str]]:
     return [{"role": item.role, "content": item.content} for item in history]
 
 
-@router.post("/chat")
+def _initial_agent_state(total_files: int) -> Dict[str, Dict[str, Any]]:
+    base = {
+        phase.value: {"status": "pending", "progress": {"step": "Aguardando processamento", "current": 0, "total": 0}}
+        for phase in AgentPhase
+    }
+    base[AgentPhase.OCR.value]["progress"] = {
+        "step": "Arquivos enfileirados para OCR",
+        "current": 0,
+        "total": total_files,
+    }
+    return base
+
+
+@router.post("/chat", tags=["consultant"])
 def chat_endpoint(payload: ChatRequest) -> Response:
     return _handle_chat(payload)
 
 
-@router.get("/chat")
+@router.get("/chat", tags=["consultant"])
 def chat_stream(encoded_payload: str = Query(..., alias="payload")) -> Response:
     try:
         data = json.loads(encoded_payload)
@@ -75,7 +144,7 @@ def chat_stream(encoded_payload: str = Query(..., alias="payload")) -> Response:
     return _handle_chat(request)
 
 
-@router.post("/llm/generate-json")
+@router.post("/llm/generate-json", tags=["consultant"])
 def generate_json(payload: GenerateJsonRequest) -> Response:
     try:
         raw_response = _llm_client.generate(
@@ -160,96 +229,52 @@ def _build_streaming_response(
         "X-Accel-Buffering": "no",
     }
     return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
-=======
-"""API route handlers for the backend service."""
-from __future__ import annotations
-
-import uuid
-from pathlib import Path
-from typing import Any
-
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
-from pydantic import BaseModel
-from sqlalchemy.orm import Session
-
-from backend.core.config import settings
-from backend.database import get_session
-from backend.database.models import Report, Task
-
-router = APIRouter(prefix="/api/v1", tags=["api"])
 
 
-class UploadResponse(BaseModel):
-    task_id: uuid.UUID
-    status: str
+@router.post("/upload", response_model=UploadResponse, status_code=status.HTTP_202_ACCEPTED, tags=["tasks"])
+async def upload_files(files: List[UploadFile] = File(...), db: Session = Depends(get_session)) -> UploadResponse:
+    if not files:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nenhum arquivo foi enviado.")
 
-
-class StatusResponse(BaseModel):
-    task_id: uuid.UUID
-    status: str
-    progress: int
-    original_filename: str | None
-    created_at: str
-    updated_at: str
-
-
-class ReportResponse(BaseModel):
-    task_id: uuid.UUID
-    content: dict[str, Any]
-    generated_at: str
-
-
-class ChatRequest(BaseModel):
-    task_id: uuid.UUID | None = None
-    message: str
-
-
-class ChatResponse(BaseModel):
-    task_id: uuid.UUID
-    status: str
-    response: str
-
-
-async def _save_upload(file: UploadFile, destination: Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    contents = await file.read()
-    with destination.open("wb") as buffer:
-        buffer.write(contents)
-
-
-@router.post("/upload", response_model=UploadResponse, status_code=status.HTTP_202_ACCEPTED)
-async def upload_file(file: UploadFile, db: Session = Depends(get_session)) -> UploadResponse:
-    """Persist an uploaded file and create a task entry."""
-
-    task_id = uuid.uuid4()
-    sanitized_name = Path(file.filename or "upload").name
-    storage_dir = Path(settings.STORAGE_PATH)
-    storage_dir.mkdir(parents=True, exist_ok=True)
-    destination = storage_dir / f"{task_id}_{sanitized_name}"
-
-    await _save_upload(file, destination)
-
-    task = Task(
-        id=task_id,
-        status="received",
-        progress=0,
-        original_filename=sanitized_name,
-        storage_path=str(destination),
-        input_metadata={"content_type": file.content_type},
-    )
+    task = Task(status="PENDING", progress=0)
     db.add(task)
+    db.flush()
+
+    saved_references: List[Dict[str, Any]] = []
+    try:
+        for upload in files:
+            reference = await _storage.persist_upload(str(task.id), upload)
+            saved_references.append(reference)
+    except Exception as exc:
+        logger.exception("Failed to persist uploaded files for task %s", task.id)
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Falha ao salvar arquivos para análise.") from exc
+
+    task.original_filename = ", ".join(ref.get("original_name", "") for ref in saved_references if ref.get("original_name")) or None
+    task.input_metadata = {"files": saved_references}
+    task.agent_status = _initial_agent_state(len(files))
     db.commit()
 
-    return UploadResponse(task_id=task_id, status=task.status)
+    try:
+        _publisher.publish({"task_id": str(task.id), "files": saved_references})
+    except Exception as exc:
+        logger.exception("Failed to enqueue task %s", task.id)
+        _status_repository.update_task_status(str(task.id), "FAILURE", detail="Falha ao enfileirar tarefa para processamento.")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Falha ao enfileirar tarefa para processamento.") from exc
+
+    return UploadResponse(task_id=task.id, status=task.status)
 
 
-@router.get("/status/{task_id}", response_model=StatusResponse)
+@router.get("/status/{task_id}", response_model=StatusResponse, tags=["tasks"])
 async def get_status(task_id: uuid.UUID, db: Session = Depends(get_session)) -> StatusResponse:
-    """Return the status of a processing task."""
-
     task = db.get(Task, task_id)
     if task is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task não encontrada.")
+
+    agents = {
+        name: BackendAgentState(status=str(payload.get("status", "pending")), progress=payload.get("progress"))
+        for name, payload in (task.agent_status or {}).items()
+    }
 
     return StatusResponse(
         task_id=task.id,
@@ -258,50 +283,43 @@ async def get_status(task_id: uuid.UUID, db: Session = Depends(get_session)) -> 
         original_filename=task.original_filename,
         created_at=task.created_at.isoformat(),
         updated_at=task.updated_at.isoformat(),
+        message=task.error_message,
+        agents=agents,
     )
 
 
-@router.get("/report/{task_id}", response_model=ReportResponse)
+@router.get("/report/{task_id}", response_model=ReportResponse, tags=["tasks"])
 async def get_report(task_id: uuid.UUID, db: Session = Depends(get_session)) -> ReportResponse:
-    """Fetch the generated report for a task."""
-
     task = db.get(Task, task_id)
     if task is None or task.report is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Relatório não encontrado.")
 
     report = task.report
     return ReportResponse(task_id=task.id, content=report.content, generated_at=report.updated_at.isoformat())
 
 
-@router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest, db: Session = Depends(get_session)) -> ChatResponse:
-    """Register a chat interaction associated with a task."""
+@router.patch("/report/{task_id}/classification", status_code=status.HTTP_204_NO_CONTENT, tags=["tasks"])
+async def update_classification(task_id: uuid.UUID, payload: ClassificationUpdate, db: Session = Depends(get_session)) -> Response:
+    task = db.get(Task, task_id)
+    if task is None or task.report is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Relatório não encontrado para atualização.")
 
-    if request.task_id is not None:
-        task = db.get(Task, request.task_id)
-        if task is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
-    else:
-        task = Task(status="chat_received", progress=0)
-        db.add(task)
-        db.flush()
+    content = dict(task.report.content)
+    documents = content.get("documents")
+    updated = False
+    if isinstance(documents, list):
+        for document in documents:
+            doc_info = document.get("doc")
+            if isinstance(doc_info, dict) and doc_info.get("name") == payload.document_name:
+                classification = document.get("classification")
+                if isinstance(classification, dict):
+                    classification["operationType"] = payload.operation_type
+                    classification["confidence"] = 1.0
+                    updated = True
+                    break
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Documento não encontrado para atualização.")
 
-    response_text = f"Acknowledged message: {request.message}"
-
-    if task.report is None:
-        report = Report(task_id=task.id, content={"messages": [request.message], "response": response_text})
-        db.add(report)
-    else:
-        report = task.report
-        messages = list(report.content.get("messages", []))
-        messages.append(request.message)
-        report.content = {**report.content, "messages": messages, "response": response_text}
-
-    task.status = "chat_completed"
-    task.progress = 100
-
+    task.report.content = content
     db.commit()
-    db.refresh(task)
-
-    return ChatResponse(task_id=task.id, status=task.status, response=response_text)
->>>>>>> 507af811abd3d378346ae3614f91483d52ae1cd3
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

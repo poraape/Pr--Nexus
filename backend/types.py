@@ -145,10 +145,17 @@ class GraphState:
 class StatusRepository:
     """Minimal repository protocol used by callbacks and worker."""
 
-    def update_agent_status(self, task_id: str, agent: AgentPhase, status: str) -> None:  # pragma: no cover - interface
+    def update_agent_status(
+        self,
+        task_id: str,
+        agent: AgentPhase,
+        status: str,
+        *,
+        progress: Optional[Dict[str, Any]] = None,
+    ) -> None:  # pragma: no cover - interface
         raise NotImplementedError
 
-    def update_task_status(self, task_id: str, status: str) -> None:  # pragma: no cover - interface
+    def update_task_status(self, task_id: str, status: str, *, detail: Optional[str] = None) -> None:  # pragma: no cover - interface
         raise NotImplementedError
 
 

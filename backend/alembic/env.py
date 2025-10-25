@@ -15,7 +15,7 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", settings.POSTGRES_DSN)
+config.set_main_option("sqlalchemy.url", settings.postgres_dsn)
 
 target_metadata = Base.metadata
 
@@ -24,7 +24,7 @@ def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
 
     context.configure(
-        url=settings.POSTGRES_DSN,
+        url=settings.postgres_dsn,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},

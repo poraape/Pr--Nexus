@@ -35,14 +35,14 @@ def sample_csv_alt(tmp_path: Path) -> Path:
 
 class InMemoryStatusRepository(StatusRepository):
     def __init__(self) -> None:
-        self.agent_updates: List[tuple[str, AgentPhase, str]] = []
-        self.task_updates: List[tuple[str, str]] = []
+        self.agent_updates: List[tuple[str, AgentPhase, str, Dict[str, Any] | None]] = []
+        self.task_updates: List[tuple[str, str, str | None]] = []
 
-    def update_agent_status(self, task_id: str, agent: AgentPhase, status: str) -> None:
-        self.agent_updates.append((task_id, agent, status))
+    def update_agent_status(self, task_id: str, agent: AgentPhase, status: str, *, progress: Dict[str, Any] | None = None) -> None:
+        self.agent_updates.append((task_id, agent, status, progress))
 
-    def update_task_status(self, task_id: str, status: str) -> None:
-        self.task_updates.append((task_id, status))
+    def update_task_status(self, task_id: str, status: str, *, detail: str | None = None) -> None:
+        self.task_updates.append((task_id, status, detail))
 
 
 class InMemoryReportRepository(ReportRepository):
