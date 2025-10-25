@@ -201,7 +201,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ messages, onSendMessage, isStream
             ref={fileInputRef}
             className="hidden"
             multiple
-            accept=".xml,.csv,.xlsx,.pdf,.png,.jpeg,.jpg,.zip"
+            accept=".xml,.csv,.xlsx,.pdf,.ocr,.png,.jpeg,.jpg,.zip"
             onChange={handleFileChange}
             disabled={isStreaming}
           />

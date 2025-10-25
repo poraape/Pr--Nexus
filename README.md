@@ -10,7 +10,7 @@ Nexus QuantumI2A2 é uma plataforma de auditoria fiscal que combina uma SPA Reac
 - **API Gateway FastAPI:** Endpoints `/api/v1/upload`, `/status/{task_id}`, `/report/{task_id}`, `/chat`, `/llm/generate-json` centralizam autenticação, filas e entrega de resultados (`backend/api/endpoints.py`).
 - **Assíncrono e Extensível:** Tarefas publicadas em RabbitMQ (modo produção) ou executadas inline via thread pool (modo desenvolvimento). O worker dedicado é inicializado por `python -m backend.worker_main`.
 - **Persistência Completa:** PostgreSQL armazena tasks, status e relatórios (`backend/database/models.py`); ChromaDB mantém embeddings para RAG (`backend/agents/consultant_agent.py`).
-- **Frontend Thin Client:** O React apenas sobe arquivos suportados (XML, CSV, JSON, ZIP) e acompanha o progresso via polling/SSE (`hooks/useAgentOrchestrator.ts`, `components/FileUpload.tsx`).
+- **Frontend Thin Client:** O React apenas sobe arquivos suportados (XML, CSV, JSON, PDF, OCR e ZIP) e acompanha o progresso via polling/SSE (`hooks/useAgentOrchestrator.ts`, `components/FileUpload.tsx`).
 - **Chat Consultivo com RAG:** Consultor fiscal responde perguntas com contexto indexado no backend.
 
 ---
