@@ -1,0 +1,11 @@
+.git
+node_modules
+backend/storage/uploads
+backend/.chroma
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.env
+.env.*
+*.log
