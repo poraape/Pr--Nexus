@@ -1,4 +1,25 @@
-const API_BASE_URL = (import.meta.env.VITE_BACKEND_URL || "").replace(/\/$/, "");
+const resolveBackendBaseUrl = (): string => {
+  const envUrl = import.meta.env.VITE_BACKEND_URL;
+  if (envUrl && envUrl.trim().length > 0) {
+    return envUrl.replace(/\/$/, "");
+  }
+
+  if (typeof window !== "undefined") {
+    const { protocol, hostname, port } = window.location;
+    let effectivePort = port;
+
+    if (port === "5173") {
+      effectivePort = "8000";
+    }
+
+    const portSegment = effectivePort ? `:${effectivePort}` : "";
+    return `${protocol}//${hostname}${portSegment}`.replace(/\/$/, "");
+  }
+
+  return "";
+};
+
+const API_BASE_URL = resolveBackendBaseUrl();
 
 export const buildApiUrl = (path: string) => {
   if (!path.startsWith("/")) {

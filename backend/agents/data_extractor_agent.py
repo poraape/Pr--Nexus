@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import csv
 import io
@@ -49,90 +49,112 @@ def _mask_cnpj(value: Optional[str]) -> Optional[str]:
     return f"{digits[:8]}****{digits[-2:]}"
 
 
+def _find_child(element: Optional[ET.Element], tag: str) -> Optional[ET.Element]:
+    if element is None:
+        return None
+    return element.find(f"./{{*}}{tag}") or element.find(tag)
+
+
+def _find_children(element: Optional[ET.Element], tag: str) -> List[ET.Element]:
+    if element is None:
+        return []
+    children = element.findall(f"./{{*}}{tag}")
+    return children or element.findall(tag)
+
+
+def _find_path(element: Optional[ET.Element], path: str) -> Optional[ET.Element]:
+    current = element
+    for part in path.split('/'):
+        current = _find_child(current, part)
+        if current is None:
+            return None
+    return current
+
+
+def _find_text(element: Optional[ET.Element], tag: str) -> Optional[str]:
+    return _xml_text(_find_child(element, tag))
+
+
+def _find_path_text(element: Optional[ET.Element], path: str) -> Optional[str]:
+    return _xml_text(_find_path(element, path))
+
+
 def _parse_nfe_xml(xml_bytes: bytes) -> Tuple[List[Dict[str, object]], Optional[str]]:
     try:
         tree = ET.fromstring(xml_bytes)
     except ET.ParseError as exc:  # pragma: no cover - defensive branch
         return [], f"XML malformado: {exc}"
 
-    # Support optional root wrappers
-    inf_nfe = tree.find(".//infNFe")
+    inf_nfe = tree.find('.//{*}infNFe') or tree.find('.//infNFe')
     if inf_nfe is None:
-        return [], "Bloco <infNFe> nÃ£o encontrado no XML."
+        return [], "Bloco <infNFe> nao encontrado no XML."
 
-    items = inf_nfe.findall("det")
+    items = _find_children(inf_nfe, 'det')
     if not items:
         return [], "Nenhum item <det> encontrado no XML."
 
-    ide = inf_nfe.find("ide") or ET.Element("ide")
-    emit = inf_nfe.find("emit") or ET.Element("emit")
-    dest = inf_nfe.find("dest") or ET.Element("dest")
-    total = inf_nfe.find("total") or ET.Element("total")
-    icms_tot = total.find("ICMSTot") or ET.Element("ICMSTot")
-    issqn_tot = total.find("ISSQNtot") or ET.Element("ISSQNtot")
+    ide = _find_child(inf_nfe, 'ide') or ET.Element('ide')
+    emit = _find_child(inf_nfe, 'emit') or ET.Element('emit')
+    dest = _find_child(inf_nfe, 'dest') or ET.Element('dest')
+    total = _find_child(inf_nfe, 'total') or ET.Element('total')
+    icms_tot = _find_child(total, 'ICMSTot') or ET.Element('ICMSTot')
+    issqn_tot = _find_child(total, 'ISSQNtot') or ET.Element('ISSQNtot')
 
-    nfe_id = inf_nfe.get("Id")
-    if not nfe_id:
-        nfe_id = inf_nfe.get("id")
+    nfe_id = inf_nfe.get('Id') or inf_nfe.get('id')
 
     result: List[Dict[str, object]] = []
     total_products = 0.0
     total_services = 0.0
     for tag in ("vProd", "vServ"):
-        try:
-            value = float(icms_tot.findtext(tag) or 0)
-        except ValueError:
-            value = 0.0
+        value = parse_safe_float(_find_text(icms_tot, tag))
         if tag == "vProd":
             total_products = value
         else:
             total_services = value
 
-    total_value = parse_safe_float(icms_tot.findtext("vNF"))
+    total_value = parse_safe_float(_find_text(icms_tot, 'vNF'))
     if total_value == 0:
         total_value = total_products + total_services
 
     for item in items:
-        prod = item.find("prod") or ET.Element("prod")
-        imposto = item.find("imposto") or ET.Element("imposto")
-        icms = list((imposto.find("ICMS") or ET.Element("ICMS")).iter())
-        icms_block = icms[0] if icms else ET.Element("ICMS")
-        pis = list((imposto.find("PIS") or ET.Element("PIS")).iter())
-        pis_block = pis[0] if pis else ET.Element("PIS")
-        cofins = list((imposto.find("COFINS") or ET.Element("COFINS")).iter())
-        cofins_block = cofins[0] if cofins else ET.Element("COFINS")
-        issqn_block = imposto.find("ISSQN") or ET.Element("ISSQN")
+        prod = _find_child(item, 'prod') or ET.Element('prod')
+        imposto = _find_child(item, 'imposto') or ET.Element('imposto')
+        icms = list((_find_child(imposto, 'ICMS') or ET.Element('ICMS')).iter())
+        icms_block = icms[0] if icms else ET.Element('ICMS')
+        pis = list((_find_child(imposto, 'PIS') or ET.Element('PIS')).iter())
+        pis_block = pis[0] if pis else ET.Element('PIS')
+        cofins = list((_find_child(imposto, 'COFINS') or ET.Element('COFINS')).iter())
+        cofins_block = cofins[0] if cofins else ET.Element('COFINS')
+        issqn_block = _find_child(imposto, 'ISSQN') or ET.Element('ISSQN')
 
         entry: Dict[str, object] = {
-            "nfe_id": nfe_id,
-            "data_emissao": _xml_text(ide.find("dhEmi")),
-            "valor_total_nfe": total_value,
-            "emitente_nome": _xml_text(emit.find("xNome")),
-            "emitente_cnpj": _mask_cnpj(_xml_text(emit.find("CNPJ")) or None),
-            "emitente_uf": _xml_text(emit.find("enderEmit/UF")),
-            "destinatario_nome": _xml_text(dest.find("xNome")),
-            "destinatario_cnpj": _mask_cnpj(_xml_text(dest.find("CNPJ")) or None),
-            "destinatario_uf": _xml_text(dest.find("enderDest/UF")),
-            "produto_nome": _xml_text(prod.find("xProd")),
-            "produto_ncm": _xml_text(prod.find("NCM")),
-            "produto_cfop": _xml_text(prod.find("CFOP")),
-            "produto_cst_icms": _xml_text(icms_block.find("CST")),
-            "produto_base_calculo_icms": parse_safe_float(icms_block.findtext("vBC")),
-            "produto_aliquota_icms": parse_safe_float(icms_block.findtext("pICMS")),
-            "produto_valor_icms": parse_safe_float(icms_block.findtext("vICMS")),
-            "produto_cst_pis": _xml_text(pis_block.find("CST")),
-            "produto_valor_pis": parse_safe_float(pis_block.findtext("vPIS")),
-            "produto_cst_cofins": _xml_text(cofins_block.find("CST")),
-            "produto_valor_cofins": parse_safe_float(cofins_block.findtext("vCOFINS")),
-            "produto_valor_iss": parse_safe_float(issqn_block.findtext("vISSQN")),
-            "produto_qtd": parse_safe_float(prod.findtext("qCom")),
-            "produto_valor_unit": parse_safe_float(prod.findtext("vUnCom")),
-            "produto_valor_total": parse_safe_float(prod.findtext("vProd")),
+            'nfe_id': nfe_id,
+            'data_emissao': _find_text(ide, 'dhEmi'),
+            'valor_total_nfe': total_value,
+            'emitente_nome': _find_text(emit, 'xNome'),
+            'emitente_cnpj': _mask_cnpj(_find_text(emit, 'CNPJ')),
+            'emitente_uf': _find_path_text(emit, 'enderEmit/UF'),
+            'destinatario_nome': _find_text(dest, 'xNome'),
+            'destinatario_cnpj': _mask_cnpj(_find_text(dest, 'CNPJ')),
+            'destinatario_uf': _find_path_text(dest, 'enderDest/UF'),
+            'produto_nome': _find_text(prod, 'xProd'),
+            'produto_ncm': _find_text(prod, 'NCM'),
+            'produto_cfop': _find_text(prod, 'CFOP'),
+            'produto_cst_icms': _find_text(icms_block, 'CST'),
+            'produto_base_calculo_icms': parse_safe_float(_find_text(icms_block, 'vBC')),
+            'produto_aliquota_icms': parse_safe_float(_find_text(icms_block, 'pICMS')),
+            'produto_valor_icms': parse_safe_float(_find_text(icms_block, 'vICMS')),
+            'produto_cst_pis': _find_text(pis_block, 'CST'),
+            'produto_valor_pis': parse_safe_float(_find_text(pis_block, 'vPIS')),
+            'produto_cst_cofins': _find_text(cofins_block, 'CST'),
+            'produto_valor_cofins': parse_safe_float(_find_text(cofins_block, 'vCOFINS')),
+            'produto_valor_iss': parse_safe_float(_find_text(issqn_block, 'vISSQN')),
+            'produto_qtd': parse_safe_float(_find_text(prod, 'qCom')),
+            'produto_valor_unit': parse_safe_float(_find_text(prod, 'vUnCom')),
+            'produto_valor_total': parse_safe_float(_find_text(prod, 'vProd')),
         }
         result.append(entry)
     return result, None
-
-
 def _parse_csv(path: Path) -> Tuple[List[Dict[str, object]], Optional[str]]:
     data: List[Dict[str, object]] = []
     with path.open("r", encoding="utf-8") as fh:
@@ -152,7 +174,7 @@ def _parse_json(path: Path) -> Tuple[List[Dict[str, object]], Optional[str]]:
 
 
 def _extract_pdf_text(path: Path) -> Tuple[str, Optional[str]]:
-    """Extrai texto de um PDF utilizando pdfminer e, se necessÃ¡rio, OCR via Tesseract."""
+    """Extrai texto de um PDF utilizando pdfminer e, se necessÃƒÂ¡rio, OCR via Tesseract."""
     try:
         from pdfminer.high_level import extract_text
 
@@ -178,7 +200,7 @@ def _extract_pdf_text(path: Path) -> Tuple[str, Optional[str]]:
     text = "\n".join(chunk.strip() for chunk in text_chunks if chunk.strip())
     if text:
         return text, None
-    return "", "NÇœo foi possï¿½ï¿½vel extrair conteÇ­do deste PDF."
+    return "", "NÃ‡Å“o foi possÃ¯Â¿Â½Ã¯Â¿Â½vel extrair conteÃ‡Â­do deste PDF."
 
 
 def _extract_currency(raw_value: Optional[str]) -> Optional[float]:
@@ -438,4 +460,5 @@ def extract_documents(file_paths: Iterable[str | Path], progress_callback: Optio
         else:
             docs.append(_handle_single_file(path))
     return docs
+
 

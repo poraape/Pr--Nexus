@@ -1,4 +1,4 @@
-"""Application settings utilities."""
+﻿"""Application settings utilities."""
 from __future__ import annotations
 
 from functools import lru_cache
@@ -80,7 +80,7 @@ class Settings(BaseSettings):
         validation_alias="GEMINI_API_KEY",
     )
     gemini_model: str = Field(
-        default="gemini-2.0-flash",
+        default="gemini-1.5-flash-8b",
         description="Gemini model identifier.",
         alias="GEMINI_MODEL",
         validation_alias="GEMINI_MODEL",
@@ -96,15 +96,13 @@ class Settings(BaseSettings):
         description="DeepSeek model identifier.",
         alias="DEEPSEEK_MODEL",
         validation_alias="DEEPSEEK_MODEL",
+    )    deepseek_cutover_chars: int = Field(
+        default=4000,
+        ge=1000,
+        description="Prompt length threshold to prefer DeepSeek in hybrid mode.",
+        alias="DEEPSEEK_CUTOVER_CHARS",
+        validation_alias="DEEPSEEK_CUTOVER_CHARS",
     )
-    max_history_messages: int = Field(
-        default=6,
-        ge=0,
-        description="Maximum number of past messages injected in the prompt.",
-        alias="MAX_HISTORY_MESSAGES",
-        validation_alias="MAX_HISTORY_MESSAGES",
-    )
-
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -123,3 +121,4 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+

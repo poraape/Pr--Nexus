@@ -6,6 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.endpoints import router as api_router
 from backend.core.config import settings
+from backend.database import Base, engine
+import backend.database.models  # noqa: F401 - ensure models are registered
 
 app = FastAPI(title="Nexus Backend", version="0.2.0")
 
@@ -18,6 +20,13 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
+
+
+@app.on_event("startup")
+async def ensure_database_schema() -> None:
+    """Garantir que as tabelas existam ao subir o serviço."""
+
+    Base.metadata.create_all(bind=engine)
 
 
 @app.get("/health")
