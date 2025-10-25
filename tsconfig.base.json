@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "moduleResolution": "Node",
+    "moduleDetection": "force",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@pr-nexus/schemas": ["packages/schemas/src"],
+      "@pr-nexus/schemas/*": ["packages/schemas/src/*"],
+      "@pr-nexus/contracts": ["packages/contracts/src"],
+      "@pr-nexus/contracts/*": ["packages/contracts/src/*"],
+      "@pr-nexus/agents": ["packages/agents/src"],
+      "@pr-nexus/agents/*": ["packages/agents/src/*"],
+      "@pr-nexus/shared": ["packages/shared/src"],
+      "@pr-nexus/shared/*": ["packages/shared/src/*"]
+    }
+  },
+  "include": []
+}

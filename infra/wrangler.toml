@@ -1,0 +1,92 @@
+name = "pr-nexus-worker"
+main = "../apps/worker/src/index.ts"
+compatibility_date = "2025-10-24"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+PROJECT_NAME = "pr-nexus"
+
+[[kv_namespaces]]
+binding = "KV_STATE"
+id = "TODO_KV_STATE_ID"
+preview_id = "TODO_KV_STATE_PREVIEW_ID"
+
+[[kv_namespaces]]
+binding = "KV_LOCKS"
+id = "TODO_KV_LOCKS_ID"
+preview_id = "TODO_KV_LOCKS_PREVIEW_ID"
+
+[[d1_databases]]
+binding = "D1_STATE"
+database_name = "pr_nexus_state"
+database_id = "TODO_D1_DATABASE_ID"
+
+[[queues.producers]]
+queue = "pr-nexus-ingest"
+binding = "QUEUE_INGEST"
+
+[[queues.producers]]
+queue = "pr-nexus-parse"
+binding = "QUEUE_PARSE"
+
+[[queues.producers]]
+queue = "pr-nexus-normalize"
+binding = "QUEUE_NORMALIZE"
+
+[[queues.producers]]
+queue = "pr-nexus-audit"
+binding = "QUEUE_AUDIT"
+
+[[queues.producers]]
+queue = "pr-nexus-classify"
+binding = "QUEUE_CLASSIFY"
+
+[[queues.producers]]
+queue = "pr-nexus-ledger"
+binding = "QUEUE_LEDGER"
+
+[[queues.producers]]
+queue = "pr-nexus-tax"
+binding = "QUEUE_TAX"
+
+[[queues.producers]]
+queue = "pr-nexus-recon"
+binding = "QUEUE_RECON"
+
+[[queues.producers]]
+queue = "pr-nexus-report"
+binding = "QUEUE_REPORT"
+
+[[queues.producers]]
+queue = "pr-nexus-observability"
+binding = "QUEUE_OBSERVABILITY"
+
+[[queues.consumers]]
+queue = "pr-nexus-ingest"
+
+[[queues.consumers]]
+queue = "pr-nexus-parse"
+
+[[queues.consumers]]
+queue = "pr-nexus-normalize"
+
+[[queues.consumers]]
+queue = "pr-nexus-audit"
+
+[[queues.consumers]]
+queue = "pr-nexus-classify"
+
+[[queues.consumers]]
+queue = "pr-nexus-ledger"
+
+[[queues.consumers]]
+queue = "pr-nexus-tax"
+
+[[queues.consumers]]
+queue = "pr-nexus-recon"
+
+[[queues.consumers]]
+queue = "pr-nexus-report"
+
+[[queues.consumers]]
+queue = "pr-nexus-observability"
