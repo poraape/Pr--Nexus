@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 chromadb>=0.5.4
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
@@ -5,3 +6,21 @@ google-generativeai>=0.8.3
 openai>=1.60.0
 pydantic>=2.10.5
 sentence-transformers>=3.3.1
+=======
+fastapi
+uvicorn
+langgraph
+pika
+sqlalchemy
+alembic
+psycopg[binary]
+chromadb
+google-generativeai
+python-magic
+pypdf
+openpyxl
+pytesseract
+opencv-python-headless
+pydantic
+pytest
+>>>>>>> 507af811abd3d378346ae3614f91483d52ae1cd3
