@@ -299,34 +299,30 @@ Se não houver dados suficientes para responder, explique a limitação.
             "properties": {
                 "text": {"type": "string"},
                 "chartData": {
-                    "anyOf": [
-                        {"type": "null"},
-                        {
-                            "type": "object",
-                            "properties": {
-                                "type": {
-                                    "type": "string",
-                                    "enum": ["bar", "pie", "line", "scatter"],
-                                },
-                                "title": {"type": "string"},
-                                "data": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "label": {"type": "string"},
-                                            "value": {"type": "number"},
-                                            "x": {"type": "number"},
-                                        },
-                                        "required": ["label", "value"],
-                                    },
-                                },
-                                "xAxisLabel": {"type": "string"},
-                                "yAxisLabel": {"type": "string"},
-                            },
-                            "required": ["type", "title", "data"],
+                    "type": "object",
+                    "nullable": True,
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": ["bar", "pie", "line", "scatter"],
                         },
-                    ],
+                        "title": {"type": "string"},
+                        "data": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "label": {"type": "string"},
+                                    "value": {"type": "number"},
+                                    "x": {"type": "number"},
+                                },
+                                "required": ["label", "value"],
+                            },
+                        },
+                        "xAxisLabel": {"type": "string"},
+                        "yAxisLabel": {"type": "string"},
+                    },
+                    "required": ["type", "title", "data"],
                 },
             },
             "required": ["text"],
