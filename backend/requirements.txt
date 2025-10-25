@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+langgraph
+pika
+sqlalchemy
+alembic
+psycopg[binary]
+chromadb
+google-generativeai
+python-magic
+pypdf
+openpyxl
+pytesseract
+opencv-python-headless
+pydantic
+pytest
