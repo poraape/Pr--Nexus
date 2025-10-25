@@ -49,16 +49,20 @@ const SmartSearch: React.FC<SmartSearchProps> = ({ report }) => {
 
         try {
             const validDocsData = report.documents
-                .filter(d => d.status !== 'ERRO' && d.doc.data)
-                .flatMap(d => d.doc.data!);
-            
-            const dataSampleForAI = Papa.unparse(validDocsData.slice(0, 500));
-            
+                ?.filter(d => d.status !== 'ERRO' && d.doc.data)
+                .flatMap(d => d.doc.data ?? []) ?? [];
+
+            const dataSampleForAI = validDocsData.length > 0
+                ? Papa.unparse(validDocsData.slice(0, 500))
+                : 'Sem dados tabulares disponíveis para consulta detalhada.';
+
+            const aggregatedMetrics = report.aggregatedMetrics ?? { info: 'Nenhuma métrica agregada disponível.' };
+
             const prompt = `
                 Você é um assistente de análise de dados fiscais. Responda à pergunta do usuário com base EXCLUSIVAMENTE nos dados fornecidos.
-                
+
                 Métricas Agregadas (Fonte de verdade para totais):
-                ${JSON.stringify(report.aggregatedMetrics, null, 2)}
+                ${JSON.stringify(aggregatedMetrics, null, 2)}
 
                 Amostra de Dados de Itens (Para perguntas detalhadas):
                 ${dataSampleForAI}
@@ -75,7 +79,7 @@ const SmartSearch: React.FC<SmartSearchProps> = ({ report }) => {
                 prompt,
                 searchResponseSchema
             );
-            
+
             setResult(searchResult);
             logger.log('SmartSearch', 'INFO', `Busca inteligente concluída com sucesso.`);
 
@@ -111,7 +115,7 @@ const SmartSearch: React.FC<SmartSearchProps> = ({ report }) => {
                     {isLoading ? <LoadingSpinnerIcon className="w-5 h-5 animate-spin" /> : <SendIcon className="w-5 h-5" />}
                 </button>
             </form>
-            
+
             {error && <p className="text-sm text-red-400 text-center">{error}</p>}
 
             {result && (
