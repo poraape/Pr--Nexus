@@ -1,26 +1,14 @@
-<<<<<<< HEAD
+alembic>=1.13.1
 chromadb>=0.5.4
 fastapi>=0.115.0
-uvicorn[standard]>=0.32.0
 google-generativeai>=0.8.3
+langchain>=0.3.0
 openai>=1.60.0
+pika>=1.3.2
 pydantic>=2.10.5
+pydantic-settings>=2.6.1
+psycopg[binary]>=3.2.3
+python-multipart>=0.0.9
 sentence-transformers>=3.3.1
-=======
-fastapi
-uvicorn
-langgraph
-pika
-sqlalchemy
-alembic
-psycopg[binary]
-chromadb
-google-generativeai
-python-magic
-pypdf
-openpyxl
-pytesseract
-opencv-python-headless
-pydantic
-pytest
->>>>>>> 507af811abd3d378346ae3614f91483d52ae1cd3
+sqlalchemy>=2.0.36
+uvicorn[standard]>=0.32.0
