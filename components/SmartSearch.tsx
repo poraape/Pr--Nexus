@@ -1,10 +1,9 @@
 import React, { useState, useCallback } from 'react';
-import { Type } from "@google/genai";
 import type { AuditReport, SmartSearchResult } from '../types';
 import Papa from 'papaparse';
 import { AiIcon, LoadingSpinnerIcon, SendIcon } from './icons';
 import { logger } from '../services/logger';
-import { generateJSON } from '../services/geminiService';
+import { generateJSON, Type } from '../services/geminiService';
 
 const searchResponseSchema = {
     type: Type.OBJECT,
