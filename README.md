@@ -1,141 +1,174 @@
 # Nexus QuantumI2A2: Análise Fiscal com IA
 
-**Nexus QuantumI2A2** é uma Single Page Application (SPA) de análise fiscal interativa que processa dados de Notas Fiscais Eletrônicas (NFe) e gera insights acionáveis através de um sistema de IA que simula múltiplos agentes especializados.
-
-Esta aplicação demonstra uma arquitetura frontend completa e robusta, onde todo o processamento, desde o parsing de arquivos até a análise por IA, ocorre diretamente no navegador do cliente, combinando análise determinística com o poder de modelos de linguagem generativa (LLMs) para fornecer uma análise fiscal completa e um assistente de chat inteligente.
+Nexus QuantumI2A2 é uma plataforma de auditoria fiscal que combina uma SPA React leve com um backend FastAPI orientado a agentes. O processamento de arquivos, regras fiscais, chamadas de IA e geração de relatórios é realizado exclusivamente no servidor, garantindo conformidade com o blueprint MAS distribuído.
 
 ---
 
-## ✨ Funcionalidades Principais
+## Funcionalidades Principais
 
-*   **Pipeline Multiagente Client-Side:** Uma cadeia de agentes especializados (Importação/OCR, Auditor, Classificador, Agente de Inteligência, Contador) processa os arquivos em etapas diretamente no navegador.
-*   **Upload Flexível de Arquivos:** Suporte para múltiplos formatos, incluindo `XML`, `CSV`, `XLSX`, `PDF`, imagens (`PNG`, `JPG`) e arquivos `.ZIP` contendo múltiplos documentos.
-*   **Análise Fiscal Aprofundada por IA:** Geração de um relatório detalhado com:
-    *   **Resumo Executivo e Recomendações Estratégicas** gerados por IA.
-    *   **Detecção de Anomalias por IA** que vai além de regras fixas.
-    *   **Validação Cruzada (Cross-Validation)** entre documentos para encontrar discrepâncias sutis.
-*   **Busca Inteligente (Smart Search):** Interaja com seus dados através de perguntas em linguagem natural diretamente no dashboard.
-*   **Chat Interativo com IA:** Um assistente de IA, contextualizado com os dados do relatório, permite explorar os resultados e gera visualizações de dados sob demanda.
-*   **Dashboards Dinâmicos:** Painéis interativos com KPIs, gráficos e filtros para uma visão aprofundada dos dados fiscais.
-*   **Apuração Contábil e Geração de SPED/EFD:** Geração automática de lançamentos contábeis e de um arquivo de texto no layout simplificado do SPED Fiscal.
-*   **Exportação de Relatórios:** Exporte a análise completa ou as conversas do chat para formatos como `PDF`, `DOCX`, `HTML` e `Markdown`.
+- **Pipeline Multiagente no Backend:** Extração, validação, classificação, cross-validation, inteligência e contabilidade residem em módulos Python (`backend/agents/*`) orquestrados por `backend/graph.py`.
+- **API Gateway FastAPI:** Endpoints `/api/v1/upload`, `/status/{task_id}`, `/report/{task_id}`, `/chat`, `/llm/generate-json` centralizam autenticação, filas e entrega de resultados (`backend/api/endpoints.py`).
+- **Assíncrono e Extensível:** Tarefas publicadas em RabbitMQ (modo produção) ou executadas inline via thread pool (modo desenvolvimento). O worker dedicado é inicializado por `python -m backend.worker_main`.
+- **Persistência Completa:** PostgreSQL armazena tasks, status e relatórios (`backend/database/models.py`); ChromaDB mantém embeddings para RAG (`backend/agents/consultant_agent.py`).
+- **Frontend Thin Client:** O React apenas sobe arquivos suportados (XML, CSV, JSON, ZIP) e acompanha o progresso via polling/SSE (`hooks/useAgentOrchestrator.ts`, `components/FileUpload.tsx`).
+- **Chat Consultivo com RAG:** Consultor fiscal responde perguntas com contexto indexado no backend.
 
 ---
 
-## 🏗️ Arquitetura Atual: Frontend-Only com IA no Navegador
+## Arquitetura Atual (MAS Server-Side)
 
-A implementação atual é uma demonstração poderosa de uma arquitetura totalmente client-side, executada no navegador do usuário.
+```text
+Frontend (React) ──► API Gateway (FastAPI) ──► RabbitMQ ──► Worker (AgentGraph) ──► PostgreSQL / ChromaDB
+                                              │
+                                              └── Storage de Arquivos
+```
 
-### Frontend (Esta Aplicação)
+- **Frontend (React/Vite)**  
+  - Upload restrito a arquivos compreendidos pelo backend (`components/FileUpload.tsx`).  
+  - Polling de status (`/api/v1/status/{task_id}`) e busca de relatório final (`/api/v1/report/{task_id}`).  
+  - Chat via SSE (`/api/v1/chat`) sem expor chaves de API.  
 
-A aplicação é uma SPA desenvolvida com **React** e **TypeScript**, utilizando **TailwindCSS** para estilização. Ela é responsável por:
-*   Fornecer uma interface de usuário rica e interativa.
-*   Executar o pipeline de agentes simulado no lado do cliente (`useAgentOrchestrator`).
-*   Enviar requisições para o backend para tarefas de IA (RAG, chat e análises avançadas), mantendo as chaves de API fora do navegador.
-*   Utilizar bibliotecas como Tesseract.js e PDF.js (com Web Workers) para processamento pesado de arquivos em background sem travar a UI.
-*   Renderizar dashboards, relatórios e o assistente de chat.
+- **FastAPI Gateway (`backend/main.py`, `backend/api/endpoints.py`)**  
+  - Persiste metadados de tarefas no PostgreSQL.  
+  - Publica mensagens em RabbitMQ via `RabbitMQPublisher` ou executa inline com `InlineTaskPublisher`.  
+  - Posta atualizações em `SQLAlchemyStatusRepository` e salva relatórios em `SQLAlchemyReportRepository`.
 
-### Backend (Novo serviço)
+- **Workers (`backend/worker.py`, `backend/worker_main.py`)**  
+  - Consumidor RabbitMQ implementado em `RabbitMQConsumer` (`backend/services/task_queue.py`).  
+  - `AuditWorker` injeta agentes via `AgentGraph`, atualizando status a cada fase (`backend/graph.py`).  
+  - Persistência de arquivos pela `FileStorage` (`backend/services/storage.py`).  
 
-Um serviço **FastAPI** centraliza o acesso aos modelos generativos e ao mecanismo de RAG:
-*   Indexação de relatórios fiscais em um **ChromaDB** persistente para consultas posteriores.
-*   Respostas do chat consultivo combinando recuperação (RAG) e modelos Gemini/DeepSeek, com suporte a **streaming via SSE**.
-*   Endpoint genérico `/api/v1/llm/generate-json` para demais agentes solicitarem respostas em JSON, preservando o schema definido no frontend.
-*   Toda a configuração sensível de chaves (ex.: `GEMINI_API_KEY`) fica restrita às variáveis de ambiente do backend.
-
----
-
-##  Blueprint para Backend de Produção
-
-Para uma solução escalável em produção, a arquitetura pode evoluir para um sistema cliente-servidor, desacoplando a interface do processamento pesado.
-
-#### Stack Tecnológico Sugerido
-*   **Framework:** Python 3.11+ com FastAPI.
-*   **Processamento Assíncrono:** Celery com RabbitMQ como message broker e Redis para cache.
-*   **Orquestração de Agentes:** Orquestrador baseado em state machine (LangGraph opcional).
-*   **Banco de Dados:** PostgreSQL para metadados, regras e logs de auditoria.
-*   **Armazenamento de Arquivos:** S3-compatible (MinIO).
-*   **Inteligência Artificial:** Google Gemini API (`gemini-2.5-flash`).
-*   **Observabilidade:** Padrão OpenTelemetry (OTLP) para tracing, métricas e logs.
-
-#### Sistema Multiagente no Backend
-
-*   **Orquestrador:** Gerencia o fluxo de trabalho (Saga pattern), garantindo a execução resiliente e a compensação de falhas.
-*   **ExtractorAgent:** Ingestão de dados brutos (XML, PDF, Imagens) via fila, usando OCR/parsing para extrair dados estruturados.
-*   **AuditorAgent:** Aplica um motor de regras fiscais para validar os dados e calcula um score de risco.
-*   **ClassifierAgent:** Categoriza os documentos por tipo de operação e setor.
-*   **AccountantAgent:** Automatiza lançamentos contábeis, apura impostos e gera o arquivo SPED.
-*   **IntelligenceAgent:** Gera insights gerenciais, alimenta o RAG para o chat e responde a simulações.
+- **Persistência e RAG**  
+  - `backend/database/models.py`: modelos `Task` e `Report`.  
+  - `backend/agents/consultant_agent.py`: indexação no ChromaDB e consultas com LLM server-side (Gemini/DeepSeek).  
 
 ---
 
-## ✅ Qualidade e Automação (Metas de Produção)
+## Execução Local
 
-O projeto adere a um rigoroso padrão de qualidade, imposto por automação no pipeline de CI/CD:
+### 1. Backend
 
-*   **Spec-as-Tests:** Testes de aceitação são derivados diretamente das especificações funcionais. Um conjunto de requisitos críticos **deve passar 100%** para que o deploy seja autorizado.
-*   **CI/CD Gates:** O pipeline de integração contínua possui gates de qualidade automáticos, incluindo:
-    *   **Cobertura de Testes:** Mínimo de 85%.
-    *   **Testes de Performance:** Verificação de latência (P95 < 1200ms) e taxa de erro (< 2%) com k6.
-    *   **Análise de Segurança:** Verificação de vulnerabilidades estáticas e de dependências.
-*   **AutoFix:** Capacidade de utilizar IA para diagnosticar e propor correções para testes que falham, acelerando o ciclo de desenvolvimento.
+```bash
+python -m venv .venv
+source .venv/bin/activate           # PowerShell: .\.venv\Scripts\Activate.ps1
+pip install -r backend/requirements.txt
+```
+
+Defina as variáveis de ambiente (arquivo `.env` na raiz ou export direto):
+
+```env
+POSTGRES_DSN=postgresql+psycopg://postgres:postgres@localhost:5432/nexus
+STORAGE_PATH=backend/storage/uploads
+CHROMA_PERSIST_DIRECTORY=backend/.chroma
+TASK_DISPATCH_MODE=inline              # use "rabbitmq" para produção
+RABBITMQ_URL=amqp://guest:guest@localhost:5672/
+RABBITMQ_QUEUE=audit_tasks
+GEMINI_API_KEY=***
+FRONTEND_ORIGIN=http://localhost:5173
+```
+
+Inicie a API:
+
+```bash
+uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### 2. Worker de Processamento
+
+- **Modo inline (padrão):** nenhuma ação extra necessária; as tarefas são executadas em threads dentro do processo FastAPI.
+- **Modo RabbitMQ:** defina `TASK_DISPATCH_MODE=rabbitmq`, suba o broker e execute em outro terminal:
+
+```bash
+python -m backend.worker_main
+```
+
+### 3. Frontend
+
+```bash
+npm install
+VITE_BACKEND_URL=http://localhost:8000 npm run dev -- --host 0.0.0.0 --port 5173
+```
+
+A aplicação estará em `http://localhost:5173`.
 
 ---
 
-## 🚀 Execução do Frontend
+## Execução com Docker Compose
 
-### No AI Studio
-1. Clique no botão "Run" ou "Executar".
-2. Uma nova aba será aberta com a aplicação em funcionamento.
+Um ambiente completo (PostgreSQL, RabbitMQ, FastAPI, Worker e Vite) está definido em `docker-compose.yml`.
 
-### Backend
-1. **Instale as dependências Python:**
-   ```bash
-   pip install -r backend/requirements.txt
-   ```
-2. **Configure as variáveis de ambiente:** crie um arquivo `.env` na pasta `backend/` ou exporte diretamente as seguintes chaves:
-   ```env
-   GEMINI_API_KEY="sua-chave-do-gemini"
-   # Opcional: altere o diretório do ChromaDB ou utilize DeepSeek definindo LLM_PROVIDER=deepseek e DEEPSEEK_API_KEY.
-   ```
-3. **Inicie o servidor FastAPI:**
-   ```bash
-   uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
-   ```
-4. **Verifique a saúde da API:** `http://localhost:8000/health`.
+```bash
+# Exporte a chave do LLM antes de subir, se necessário
+export GEMINI_API_KEY=***
+docker compose up --build
+```
 
-### Frontend
-1. **Clone o repositório.**
-2. **Configure as variáveis do Vite:** crie um arquivo `.env.local` na raiz contendo, no mínimo:
-   ```env
-   VITE_BACKEND_URL="http://localhost:8000"
-   ```
-3. **Instale as dependências e inicie o servidor de desenvolvimento:**
-   ```bash
-   npm install
-   npm run dev
-   ```
-4. Acesse a URL fornecida (geralmente `http://localhost:5173`). O frontend comunicará o backend para realizar buscas, gerar insights e responder ao chat.
+Serviços expostos:
+
+- FastAPI: `http://localhost:8000`
+- Frontend: `http://localhost:5173`
+- RabbitMQ Management: `http://localhost:15672` (guest/guest)
+- PostgreSQL: `localhost:5432`
+
+Volumes nomeados preservam uploads, embeddings e dados do banco (`backend_storage`, `backend_chroma`, `postgres_data`, `rabbitmq_data`).
 
 ---
 
-## 📁 Estrutura de Pastas
+## Estrutura de Pastas Relevante
 
 ```
-/
-├── backend/
-│   ├── agents/            # Agentes e lógica de RAG (ConsultantAgent)
-│   ├── api/               # Endpoints FastAPI (chat e LLM genérico)
-│   ├── core/              # Configuração (variáveis de ambiente)
-│   ├── services/          # Cliente LLM compartilhado (Gemini/DeepSeek)
-│   ├── main.py            # Ponto de entrada FastAPI
-│   └── requirements.txt   # Dependências Python
-├── agents/                # Agentes executados no frontend
-├── components/            # Componentes React reutilizáveis
-├── hooks/                 # Hooks React customizados (ex: useAgentOrchestrator)
-├── services/              # Serviços (requisições ao backend, logger)
-├── utils/                 # Funções utilitárias (parsers, exportação, regras)
-├── App.tsx                # Componente principal da aplicação
-├── index.html             # Arquivo HTML principal
-└── README.md              # Este arquivo
+backend/
+  agents/                   # Agentes Python (Intelligence, Accountant, etc.)
+  api/                      # Endpoints FastAPI
+  core/config.py            # Configurações e carregamento de env
+  database/                 # SQLAlchemy engine e modelos
+  graph.py                  # Orquestração do pipeline multiagente
+  worker.py                 # AuditWorker e interface MessageBroker
+  worker_main.py            # Entry point para consumidor RabbitMQ
+  services/
+    task_queue.py           # Inline/RabbitMQ publishers + RabbitMQConsumer
+    storage.py              # Persistência de arquivos
+frontend (raiz do projeto)
+  components/               # UI, upload, dashboards
+  hooks/useAgentOrchestrator.ts
+  services/                 # httpClient/chatService delegando ao backend
+  types.ts                  # Tipos compartilhados com o backend
+docker-compose.yml          # Orquestração local completa
+backend/Dockerfile          # Imagem base para API e worker
 ```
+
+Os antigos agentes TypeScript client-side foram removidos (agora toda a lógica está em Python).
+
+---
+
+## Variáveis de Ambiente Importantes
+
+| Variável | Descrição |
+| --- | --- |
+| `POSTGRES_DSN` | DSN usado pelo SQLAlchemy para persistir tarefas e relatórios. |
+| `TASK_DISPATCH_MODE` | `inline` (padrão) ou `rabbitmq`. Controla como as tasks são enfileiradas. |
+| `RABBITMQ_URL` / `RABBITMQ_QUEUE` | Configuração do broker quando `TASK_DISPATCH_MODE=rabbitmq`. |
+| `STORAGE_PATH` | Diretório para uploads persistidos antes do processamento. |
+| `CHROMA_PERSIST_DIRECTORY` | Pasta usada pelo ChromaDB para embeddings. |
+| `GEMINI_API_KEY` / `DEEPSEEK_API_KEY` | Chaves dos provedores de LLM. Nunca expostas ao frontend. |
+| `FRONTEND_ORIGIN` | Origin autorizado para CORS. |
+| `VITE_BACKEND_URL` (frontend) | URL do gateway FastAPI consumida pelo SPA. |
+
+---
+
+## Testes
+
+O backend possui testes PyTest para agentes e grafo (`backend/tests/*`). Execute:
+
+```bash
+pytest backend/tests
+```
+
+---
+
+## Segurança
+
+- Chaves de LLM são carregadas apenas no backend via variáveis de ambiente (`backend/core/config.py`).  
+- Frontend não contém segredos; interage exclusivamente com a API.  
+- Upload de arquivos agora é validado no cliente para aceitar somente formatos processados pelo backend (`components/FileUpload.tsx`).  
+- Recomenda-se habilitar HTTPS, secret management e autenticação no deployment final.

@@ -1,0 +1,100 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: nexus
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d nexus"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      TASK_DISPATCH_MODE: rabbitmq
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      RABBITMQ_QUEUE: audit_tasks
+      POSTGRES_DSN: postgresql+psycopg://postgres:postgres@postgres:5432/nexus
+      STORAGE_PATH: /app/backend/storage/uploads
+      CHROMA_PERSIST_DIRECTORY: /app/backend/.chroma
+      FRONTEND_ORIGIN: http://localhost:5173
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    volumes:
+      - backend_storage:/app/backend/storage/uploads
+      - backend_chroma:/app/backend/.chroma
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["python", "-m", "backend.worker_main"]
+    environment:
+      TASK_DISPATCH_MODE: rabbitmq
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      RABBITMQ_QUEUE: audit_tasks
+      POSTGRES_DSN: postgresql+psycopg://postgres:postgres@postgres:5432/nexus
+      STORAGE_PATH: /app/backend/storage/uploads
+      CHROMA_PERSIST_DIRECTORY: /app/backend/.chroma
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    volumes:
+      - backend_storage:/app/backend/storage/uploads
+      - backend_chroma:/app/backend/.chroma
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  frontend:
+    image: node:22-alpine
+    working_dir: /app
+    command: >
+      sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    environment:
+      VITE_BACKEND_URL: http://backend:8000
+    volumes:
+      - ./:/app
+      - node_modules:/app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      backend:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+  backend_storage:
+  backend_chroma:
+  node_modules:
