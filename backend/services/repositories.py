@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -16,9 +16,9 @@ _AGENT_STEP_HINTS: Dict[AgentPhase, str] = {
     AgentPhase.OCR: "Processando arquivos e extraindo dados...",
     AgentPhase.AUDITOR: "Executando regras fiscais...",
     AgentPhase.CLASSIFIER: "Classificando documentos...",
-    AgentPhase.CROSS_VALIDATOR: "Validando consistência determinística...",
+    AgentPhase.CROSS_VALIDATOR: "Validando consistÃªncia determinÃ­stica...",
     AgentPhase.INTELLIGENCE: "Gerando insights com IA...",
-    AgentPhase.ACCOUNTANT: "Preparando visão contábil...",
+    AgentPhase.ACCOUNTANT: "Preparando visÃ£o contÃ¡bil...",
 }
 
 
@@ -71,36 +71,34 @@ class SQLAlchemyStatusRepository(StatusRepository):
                         payload.setdefault("progress", {})["step"] = detail
 
 
--class SQLAlchemyReportRepository(ReportRepository):
-+class SQLAlchemyReportRepository(ReportRepository):
-     """Persist generated reports to the relational database."""
- 
-     def __init__(self, session_factory: Callable[[], Session] = SessionLocal) -> None:
-         self._session_factory = session_factory
- 
-     def save_report(self, task_id: str, report: AuditReport) -> None:
--        # TODO: implement persistence logic
--        raise NotImplementedError
-+        payload = to_serializable(report)
-+        with session_scope() as session:
-+            task = session.get(Task, uuid.UUID(task_id))
-+            if task is None:
-+                raise ValueError(f"Task {task_id} not found while saving report")
-+
-+            if task.report is None:
-+                task.report = Report(task_id=task.id, content=payload)
-+            else:
-+                task.report.content = payload
-+
-+
-+class InlineTaskExecutor:
-+    """Utility that runs callables on a background thread."""
-+
-+    def __init__(self) -> None:
-+        self._executor = ThreadPoolExecutor(max_workers=2)
-+
-+    def submit(self, func: Callable[..., None], *args: Any, **kwargs: Any) -> None:
-+        self._executor.submit(func, *args, **kwargs)
-+
-+
-+inline_executor = InlineTaskExecutor()
+
+class SQLAlchemyReportRepository(ReportRepository):
+    """Persist generated reports to the relational database."""
+
+    def __init__(self, session_factory: Callable[[], Session] = SessionLocal) -> None:
+        self._session_factory = session_factory
+
+    def save_report(self, task_id: str, report: AuditReport) -> None:
+        payload = to_serializable(report)
+        with session_scope() as session:
+            task = session.get(Task, uuid.UUID(task_id))
+            if task is None:
+                raise ValueError(f"Task {task_id} not found while saving report")
+
+            if task.report is None:
+                task.report = Report(task_id=task.id, content=payload)
+            else:
+                task.report.content = payload
+
+
+class InlineTaskExecutor:
+    """Utility that runs callables on a background thread."""
+
+    def __init__(self) -> None:
+        self._executor = ThreadPoolExecutor(max_workers=2)
+
+    def submit(self, func: Callable[..., None], *args: Any, **kwargs: Any) -> None:
+        self._executor.submit(func, *args, **kwargs)
+
+
+inline_executor = InlineTaskExecutor()

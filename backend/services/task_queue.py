@@ -32,11 +32,11 @@ class InlineTaskPublisher(TaskPublisher):
 class RabbitMQPublisher(TaskPublisher):  # pragma: no cover - requires RabbitMQ
     """Publish tasks to a RabbitMQ queue."""
 
-    def __init__(self, url: str, queue_name: str = "audit_tasks") -> None:
+    def __init__(self, url: str, queue_name: str = "audit_tasks", *, queue: str | None = None) -> None:
         if pika is None:
             raise RuntimeError("pika library is required for RabbitMQ publishing")
         self._params = pika.URLParameters(url)
-        self._queue_name = queue_name
+        self._queue_name = queue or queue_name
 
     def publish(self, message: Dict[str, Any]) -> None:
         connection = pika.BlockingConnection(self._params)
@@ -54,11 +54,11 @@ class RabbitMQPublisher(TaskPublisher):  # pragma: no cover - requires RabbitMQ
 class RabbitMQConsumer(MessageBroker):  # pragma: no cover - requires RabbitMQ
     """Consume tasks from a RabbitMQ queue and dispatch them to the worker."""
 
-    def __init__(self, url: str, queue_name: str = "audit_tasks") -> None:
+    def __init__(self, url: str, queue_name: str = "audit_tasks", *, queue: str | None = None) -> None:
         if pika is None:
             raise RuntimeError("pika library is required for RabbitMQ consumption")
         self._params = pika.URLParameters(url)
-        self._queue_name = queue_name
+        self._queue_name = queue or queue_name
 
     def consume(self, queue: str, callback: Callable[[Dict[str, Any] | str], None]) -> None:
         connection = pika.BlockingConnection(self._params)
