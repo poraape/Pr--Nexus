@@ -9,7 +9,7 @@ interface FileUploadProps {
 
 const FILE_SIZE_LIMIT_MB = 200;
 const FILE_SIZE_LIMIT_BYTES = FILE_SIZE_LIMIT_MB * 1024 * 1024;
-const ACCEPTED_EXTENSIONS = [".xml", ".csv", ".json", ".zip"];
+const ACCEPTED_EXTENSIONS = [".xml", ".csv", ".json", ".pdf", ".ocr", ".zip"];
 
 const FileUpload: React.FC<FileUploadProps> = ({ onStartAnalysis, disabled }) => {
   const [isDragging, setIsDragging] = useState(false);
@@ -35,7 +35,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onStartAnalysis, disabled }) =>
           if (file.size > FILE_SIZE_LIMIT_BYTES) {
               rejectedFiles.push({name: file.name, reason: `Tamanho excede ${FILE_SIZE_LIMIT_MB} MB`});
           } else if (!ACCEPTED_EXTENSIONS.some(ext => file.name.toLowerCase().endsWith(ext))) {
-              rejectedFiles.push({name: file.name, reason: 'Formato nao suportado. Utilize XML, CSV, JSON ou ZIP contendo esses formatos.'});
+              rejectedFiles.push({name: file.name, reason: 'Formato nao suportado. Utilize XML, CSV, JSON, PDF, OCR ou ZIP contendo esses formatos.'});
           } else if (files.some(f => f.name === file.name)) {
               rejectedFiles.push({name: file.name, reason: 'Arquivo já adicionado.'});
           }
@@ -382,7 +382,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onStartAnalysis, disabled }) =>
     }
   };
 
-  const fileTypes = ".xml,.csv,.json,.zip,application/zip,application/x-zip-compressed";
+  const fileTypes = ".xml,.csv,.json,.pdf,.ocr,.zip,application/zip,application/x-zip-compressed,application/pdf";
 
   const containerClasses = `
     border-2 border-dashed rounded-xl p-6 text-center transition-all duration-300
@@ -418,7 +418,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onStartAnalysis, disabled }) =>
               Clique ou arraste novos arquivos
             </p>
             <p className="text-xs text-gray-500 mt-1">
-              Suportados: XML, CSV, JSON e ZIP (com documentos XML/CSV) - limite de {FILE_SIZE_LIMIT_MB}MB
+              Suportados: XML, CSV, JSON, PDF, OCR e ZIP (com documentos XML/CSV/PDF) - limite de {FILE_SIZE_LIMIT_MB}MB
             </p>
           </div>
         </label>

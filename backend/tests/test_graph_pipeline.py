@@ -13,7 +13,7 @@ def test_graph_executes_pipeline(sample_csv: Path, sample_csv_alt: Path, reposit
     result = graph.invoke(state)
     assert result.audit_report is not None
     assert result.audit_report.summary is not None
-    completed_phases = {phase for _, phase, status in status_repo.agent_updates if status == "completed"}
+    completed_phases = {phase for _, phase, status, _ in status_repo.agent_updates if status == "completed"}
     assert completed_phases == {
         AgentPhase.OCR,
         AgentPhase.AUDITOR,

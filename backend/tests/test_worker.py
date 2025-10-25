@@ -14,5 +14,5 @@ def test_worker_process_message(sample_csv: Path, repositories) -> None:
         storage=storage,
     )
     worker.process_message({"task_id": "task-123", "files": [{"id": "file-1"}]})
-    assert repositories["status"].task_updates[-1] == ("task-123", "SUCCESS")
+    assert repositories["status"].task_updates[-1] == ("task-123", "SUCCESS", None)
     assert "task-123" in repositories["report"].saved
