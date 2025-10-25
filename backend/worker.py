@@ -48,5 +48,5 @@ class AuditWorker:
             self.report_repository.save_report(task_id, result.audit_report)
             self.status_repository.update_task_status(task_id, "SUCCESS")
         except Exception as error:  # pragma: no cover - error path
-            self.status_repository.update_task_status(task_id, "FAILURE")
+            self.status_repository.update_task_status(task_id, "FAILURE", detail=str(error))
             raise

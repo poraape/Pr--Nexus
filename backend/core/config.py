@@ -12,6 +12,42 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
+    frontend_origin: str = Field(
+        default="*",
+        description="Origin allowed to access the API.",
+        alias="FRONTEND_ORIGIN",
+        validation_alias="FRONTEND_ORIGIN",
+    )
+    postgres_dsn: str = Field(
+        default="postgresql+psycopg://postgres:postgres@localhost:5432/nexus",
+        description="Database connection string used by SQLAlchemy.",
+        alias="POSTGRES_DSN",
+        validation_alias="POSTGRES_DSN",
+    )
+    storage_path: Path = Field(
+        default=Path("backend/storage/uploads"),
+        description="Directory where uploaded files are persisted before processing.",
+        alias="STORAGE_PATH",
+        validation_alias="STORAGE_PATH",
+    )
+    task_dispatch_mode: Literal["inline", "rabbitmq"] = Field(
+        default="inline",
+        description="Strategy used to dispatch tasks to workers.",
+        alias="TASK_DISPATCH_MODE",
+        validation_alias="TASK_DISPATCH_MODE",
+    )
+    rabbitmq_url: str = Field(
+        default="amqp://guest:guest@localhost:5672/",
+        description="Connection URL for RabbitMQ when task_dispatch_mode=rabbitmq.",
+        alias="RABBITMQ_URL",
+        validation_alias="RABBITMQ_URL",
+    )
+    rabbitmq_queue: str = Field(
+        default="audit_tasks",
+        description="Queue name used for audit task messages.",
+        alias="RABBITMQ_QUEUE",
+        validation_alias="RABBITMQ_QUEUE",
+    )
     chroma_persist_directory: Path = Field(
         default=Path("backend/.chroma"),
         description="Directory where ChromaDB collections are persisted.",
@@ -82,4 +118,8 @@ def get_settings() -> Settings:
 
     settings = Settings()  # type: ignore[call-arg]
     settings.chroma_persist_directory.mkdir(parents=True, exist_ok=True)
+    settings.storage_path.mkdir(parents=True, exist_ok=True)
     return settings
+
+
+settings = get_settings()

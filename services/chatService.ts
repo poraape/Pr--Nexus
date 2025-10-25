@@ -1,4 +1,5 @@
 import type { AuditReport, ChartData } from "../types";
+import { apiFetch, buildApiUrl, extractErrorDetail } from "./httpClient";
 
 type HistoryRole = "user" | "assistant";
 
@@ -34,10 +35,6 @@ export interface StreamHandlers {
   onError: (message: string) => void;
 }
 
-const API_BASE_URL = (import.meta.env.VITE_BACKEND_URL || "").replace(/\/$/, "");
-
-const buildUrl = (path: string) => `${API_BASE_URL}${path}`;
-
 const toBody = (payload: Record<string, unknown>) =>
   JSON.stringify(payload, (_key, value) => (value === undefined ? null : value));
 
@@ -47,7 +44,7 @@ export async function initializeConsultantSession({
   metadata,
   history,
 }: InitializeSessionPayload): Promise<void> {
-  const response = await fetch(buildUrl("/api/v1/chat"), {
+  await apiFetch("/api/v1/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: toBody({
@@ -57,11 +54,6 @@ export async function initializeConsultantSession({
       history: history ?? [],
     }),
   });
-
-  if (!response.ok) {
-    const detail = await safeExtractError(response);
-    throw new Error(detail || "Falha ao inicializar o consultor fiscal.");
-  }
 }
 
 export async function sendChatMessage({
@@ -70,7 +62,7 @@ export async function sendChatMessage({
   history = [],
   stream = false,
 }: ChatRequestPayload): Promise<ConsultantResponse> {
-  const response = await fetch(buildUrl("/api/v1/chat"), {
+  const response = await apiFetch("/api/v1/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: toBody({
@@ -80,11 +72,6 @@ export async function sendChatMessage({
       stream,
     }),
   });
-
-  if (!response.ok) {
-    const detail = await safeExtractError(response);
-    throw new Error(detail || "Falha ao solicitar resposta do consultor.");
-  }
 
   const payload = await response.json();
   return payload.message as ConsultantResponse;
@@ -103,7 +90,7 @@ export function streamChatMessage(
     }),
   });
 
-  const eventSource = new EventSource(`${buildUrl("/api/v1/chat")}?${params.toString()}`);
+  const eventSource = new EventSource(`${buildApiUrl("/api/v1/chat")}?${params.toString()}`);
 
   eventSource.onmessage = (event) => {
     try {
@@ -137,17 +124,4 @@ export function streamChatMessage(
   };
 }
 
-async function safeExtractError(response: Response): Promise<string | null> {
-  try {
-    const payload = await response.json();
-    if (payload?.detail) {
-      if (typeof payload.detail === "string") return payload.detail;
-      if (Array.isArray(payload.detail) && payload.detail[0]?.msg) {
-        return payload.detail[0].msg as string;
-      }
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
+export { extractErrorDetail };
