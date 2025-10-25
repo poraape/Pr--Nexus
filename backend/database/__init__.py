@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from backend.core.config import settings
 
-engine = create_engine(settings.POSTGRES_DSN, future=True, pool_pre_ping=True)
+engine = create_engine(settings.postgres_dsn, future=True, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False, future=True)
 
 Base = declarative_base()
