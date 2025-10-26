@@ -33,7 +33,13 @@ class _FallbackEmbeddingFunction:
         self._dimension = dimension
 
     def __call__(self, input: Documents) -> List[List[float]]:  # type: ignore[override]
-        return [[0.0] * self._dimension for _ in input]
+        return self.embed_documents(input)
+
+    def embed_documents(self, documents: Documents) -> List[List[float]]:
+        return [[0.0] * self._dimension for _ in documents]
+
+    def embed_query(self, input: str) -> List[float]:
+        return [0.0] * self._dimension
 
     def name(self) -> str:
         return "fallback"
@@ -264,11 +270,18 @@ class ConsultantAgent:
         return items
 
     def _retrieve_context(self, report_id: str, question: str) -> List[str]:
-        results = self._collection.query(
-            query_texts=[question],
-            n_results=self._settings.rag_top_k,
-            where={"report_id": report_id},
-        )
+        try:
+            results = self._collection.query(
+                query_texts=[question],
+                n_results=self._settings.rag_top_k,
+                where={"report_id": report_id},
+            )
+        except AttributeError as exc:
+            logger.warning("Embedding backend does not support queries; skipping retrieval: %s", exc)
+            return []
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Failed to retrieve context for report %s: %s", report_id, exc)
+            return []
         documents: Documents = results.get("documents", [])  # type: ignore[assignment]
         if not documents:
             return []

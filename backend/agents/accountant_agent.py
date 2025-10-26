@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import unicodedata
 from collections import defaultdict
 from datetime import date
 from typing import Dict, List
@@ -21,6 +22,21 @@ def _format_currency(value: float) -> str:
 MOCK_ALIQUOTAS = {"IVA": 0.25}
 
 
+_METRIC_KEY_CANONICAL = {
+    "Numero de Documentos Validos": "\u004e\u00famero de Documentos V\u00e1lidos",
+    "Ngmero de Documentos Volidos": "\u004e\u00famero de Documentos V\u00e1lidos",
+}
+
+
+def _normalize_metric_keys(metrics: Dict[str, object]) -> Dict[str, object]:
+    normalized: Dict[str, object] = {}
+    for key, value in metrics.items():
+        ascii_key = unicodedata.normalize("NFKD", key).encode("ascii", "ignore").decode("ascii")
+        canonical = _METRIC_KEY_CANONICAL.get(ascii_key, key)
+        normalized[canonical] = value
+    return normalized
+
+
 def _run_deterministic_accounting(report: AuditReport) -> Dict[str, object]:
     valid_docs = [doc for doc in report.documents if doc.status != doc.status.ERRO and doc.doc.data]
     metrics = {
@@ -35,7 +51,7 @@ def _run_deterministic_accounting(report: AuditReport) -> Dict[str, object]:
         "Estimativa de IVA (Simulado)": _format_currency(0),
     }
     if not valid_docs:
-        return metrics
+        return _normalize_metric_keys(metrics)
 
     all_items = [item for doc in valid_docs for item in (doc.doc.data or [])]
     unique_nfes = {}
@@ -76,7 +92,7 @@ def _run_deterministic_accounting(report: AuditReport) -> Dict[str, object]:
     if total_nfe_value == 0 and all_items:
         metrics["Alerta de Qualidade"] = "O valor total das NFes processadas é zero, indicando dados de origem inconsistentes."
 
-    return metrics
+    return _normalize_metric_keys(metrics)
 
 
 def _generate_accounting_entries(documents: List[AuditedDocument]) -> List[AccountingEntry]:
