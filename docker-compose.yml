@@ -1,20 +1,4 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: nexus
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d nexus"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   rabbitmq:
     image: rabbitmq:3.13-management
     ports:
@@ -36,19 +20,17 @@ services:
       TASK_DISPATCH_MODE: rabbitmq
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       RABBITMQ_QUEUE: audit_tasks
-      POSTGRES_DSN: postgresql+psycopg://postgres:postgres@postgres:5432/nexus
-      STORAGE_PATH: /app/backend/storage/uploads
-      CHROMA_PERSIST_DIRECTORY: /app/backend/.chroma
+      POSTGRES_DSN: sqlite+aiosqlite:///data/nexus.db
+      STORAGE_PATH: /data/uploads
+      CHROMA_PERSIST_DIRECTORY: /data/chroma
+      SPACE_RUNTIME_DIR: /data
       FRONTEND_ORIGIN: http://localhost:5173
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     volumes:
-      - backend_storage:/app/backend/storage/uploads
-      - backend_chroma:/app/backend/.chroma
+      - backend_data:/data
     ports:
       - "8000:8000"
     depends_on:
-      postgres:
-        condition: service_healthy
       rabbitmq:
         condition: service_healthy
 
@@ -61,16 +43,14 @@ services:
       TASK_DISPATCH_MODE: rabbitmq
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       RABBITMQ_QUEUE: audit_tasks
-      POSTGRES_DSN: postgresql+psycopg://postgres:postgres@postgres:5432/nexus
-      STORAGE_PATH: /app/backend/storage/uploads
-      CHROMA_PERSIST_DIRECTORY: /app/backend/.chroma
+      POSTGRES_DSN: sqlite+aiosqlite:///data/nexus.db
+      STORAGE_PATH: /data/uploads
+      CHROMA_PERSIST_DIRECTORY: /data/chroma
+      SPACE_RUNTIME_DIR: /data
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     volumes:
-      - backend_storage:/app/backend/storage/uploads
-      - backend_chroma:/app/backend/.chroma
+      - backend_data:/data
     depends_on:
-      postgres:
-        condition: service_healthy
       rabbitmq:
         condition: service_healthy
 
@@ -91,8 +71,6 @@ services:
         condition: service_started
 
 volumes:
-  postgres_data:
   rabbitmq_data:
-  backend_storage:
-  backend_chroma:
+  backend_data:
   node_modules:
