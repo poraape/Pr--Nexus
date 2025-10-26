@@ -96,7 +96,8 @@ class Settings(BaseSettings):
         description="DeepSeek model identifier.",
         alias="DEEPSEEK_MODEL",
         validation_alias="DEEPSEEK_MODEL",
-    )    deepseek_cutover_chars: int = Field(
+    )
+    deepseek_cutover_chars: int = Field(
         default=4000,
         ge=1000,
         description="Prompt length threshold to prefer DeepSeek in hybrid mode.",
