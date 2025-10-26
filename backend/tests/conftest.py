@@ -4,7 +4,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+import os
+
 import pytest
+
+os.environ.setdefault("DISABLE_CONSULTANT_AGENT", "1")
+os.environ.setdefault("LLM_PROVIDER", "gemini")
+os.environ.setdefault("GEMINI_API_KEY", "test-key")
 
 from backend.types import AgentPhase, AuditReport, ImportedDoc, ReportRepository, StatusRepository, StorageGateway
 
