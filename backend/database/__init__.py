@@ -5,11 +5,33 @@ from contextlib import contextmanager
 from typing import Generator
 
 from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from backend.core.config import settings
 
-engine = create_engine(settings.postgres_dsn, future=True, pool_pre_ping=True)
+
+def _create_engine() -> Engine:
+
+    url = make_url(settings.sqlalchemy_sync_url)
+    engine_kwargs: dict[str, object] = {"future": True}
+    connect_args: dict[str, object] = {}
+
+    if url.drivername.startswith("sqlite"):
+        connect_args["check_same_thread"] = False
+        engine_kwargs["connect_args"] = connect_args
+        if url.database in (None, "", ":memory:"):
+            engine_kwargs["poolclass"] = StaticPool
+        else:
+            engine_kwargs["pool_pre_ping"] = True
+    else:
+        engine_kwargs["pool_pre_ping"] = True
+
+    return create_engine(url, **engine_kwargs)
+
+
+engine = _create_engine()
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False, future=True)
 
 Base = declarative_base()

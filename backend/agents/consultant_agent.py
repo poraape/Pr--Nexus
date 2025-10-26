@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import threading
 from typing import Dict, Generator, Iterable, List, Optional, Tuple
 from uuid import uuid4
@@ -17,8 +19,24 @@ from backend.core.config import Settings
 from backend.services.llm_client import LLMClient, LLMClientError
 
 
+logger = logging.getLogger(__name__)
+
+
 class ConsultantAgentError(RuntimeError):
     """Raised when the consultant agent cannot complete an operation."""
+
+
+class _FallbackEmbeddingFunction:
+    """Deterministic embedding function used when sentence-transformers is unavailable."""
+
+    def __init__(self, dimension: int = 384) -> None:
+        self._dimension = dimension
+
+    def __call__(self, input: Documents) -> List[List[float]]:  # type: ignore[override]
+        return [[0.0] * self._dimension for _ in input]
+
+    def name(self) -> str:
+        return "fallback"
 
 
 class ConsultantAgent:
@@ -45,12 +63,35 @@ class ConsultantAgent:
 
     @staticmethod
     def _resolve_embedding_function(settings: Settings) -> EmbeddingFunction:
-        if SentenceTransformerEmbeddingFunction is None:
-            raise ConsultantAgentError(
-                "sentence-transformers is required to embed reports for retrieval."
-            )
         model_name = settings.embedding_model_name
-        return SentenceTransformerEmbeddingFunction(model_name=model_name)
+        allow_remote = os.getenv("ALLOW_REMOTE_EMBEDDINGS", "0").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+
+        if not allow_remote:
+            logger.info(
+                "Remote embedding downloads disabled. Using fallback embeddings. Set "
+                "ALLOW_REMOTE_EMBEDDINGS=1 to enable SentenceTransformer downloads.",
+            )
+            return _FallbackEmbeddingFunction()
+
+        if SentenceTransformerEmbeddingFunction is None:
+            logger.warning(
+                "sentence-transformers is not installed. Falling back to zero embeddings."
+            )
+            return _FallbackEmbeddingFunction()
+
+        try:
+            return SentenceTransformerEmbeddingFunction(model_name=model_name)
+        except Exception as exc:  # pragma: no cover - requires external services
+            logger.warning(
+                "Failed to load embedding model '%s': %s. Falling back to zero embeddings.",
+                model_name,
+                exc,
+            )
+            return _FallbackEmbeddingFunction()
 
     def index_report(
         self,

@@ -34,14 +34,12 @@ class LLMClient:
         if settings.deepseek_api_key and OpenAI is not None:
             self._deepseek = OpenAI(api_key=settings.deepseek_api_key, base_url="https://api.deepseek.com")
 
-        if self._provider == "gemini" and not self._gemini:
-            raise LLMClientError("GEMINI_API_KEY is required when LLM_PROVIDER=gemini.")
-        if self._provider == "deepseek" and not self._deepseek:
-            raise LLMClientError("DEEPSEEK_API_KEY is required when LLM_PROVIDER=deepseek.")
-        if self._provider == "hybrid" and not (self._gemini or self._deepseek):
-            raise LLMClientError("At least one provider must be configured for hybrid mode.")
+        if not (self._gemini or self._deepseek):
+            self._provider = "stub"
 
     def _choose_provider(self, prompt: str, *, response_schema: Optional[Dict]) -> str:
+        if self._provider == "stub":
+            return "stub"
         if response_schema and self._gemini is not None:
             return "gemini"
         if self._provider == "hybrid" and self._deepseek is not None:
@@ -57,6 +55,8 @@ class LLMClient:
 
     def generate(self, prompt: str, *, response_mime: str = "text/plain", response_schema: Optional[Dict] = None, model: Optional[str] = None) -> str:
         provider = self._choose_provider(prompt, response_schema=response_schema)
+        if provider == "stub":
+            return "{}" if response_mime == "application/json" else ""
         if provider == "gemini":
             generation_config = {"response_mime_type": response_mime}
             if response_schema:
@@ -72,6 +72,12 @@ class LLMClient:
 
     def stream(self, prompt: str, *, response_mime: str = "text/plain", response_schema: Optional[Dict] = None, model: Optional[str] = None) -> Iterable[str]:
         provider = self._choose_provider(prompt, response_schema=response_schema)
+        if provider == "stub":
+            if response_mime == "application/json":
+                yield "{}"
+            else:
+                yield ""
+            return
         if provider == "gemini":
             generation_config = {"response_mime_type": response_mime}
             if response_schema:
