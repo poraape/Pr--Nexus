@@ -22,7 +22,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HF_HOME=/data/.cache/huggingface \
     HF_HUB_CACHE=/data/.cache/huggingface \
     TRANSFORMERS_CACHE=/data/.cache/huggingface \
-    SENTENCE_TRANSFORMERS_HOME=/data/.cache/sentencetransformers
+    SENTENCE_TRANSFORMERS_HOME=/data/.cache/sentencetransformers \
+    PYTHONPATH=/workspace
 
 WORKDIR /workspace
 

@@ -73,7 +73,9 @@ class ChatRequest(BaseModel):
 class GenerateJsonRequest(BaseModel):
     prompt: str
     model: Optional[str] = None
-    schema: Optional[Dict[str, Any]] = None
+    response_schema: Optional[Dict[str, Any]] = Field(default=None, alias="schema")
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class UploadResponse(BaseModel):
@@ -159,7 +161,7 @@ def generate_json(payload: GenerateJsonRequest) -> Response:
         raw_response = _llm_client.generate(
             payload.prompt,
             response_mime="application/json",
-            response_schema=payload.schema,
+            response_schema=payload.response_schema,
             model=payload.model,
         )
         parsed = json.loads(raw_response)
