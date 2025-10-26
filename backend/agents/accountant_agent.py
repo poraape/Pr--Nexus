@@ -22,9 +22,30 @@ def _format_currency(value: float) -> str:
 MOCK_ALIQUOTAS = {"IVA": 0.25}
 
 
+_METRIC_LABELS = {
+    "documents": "N\u00famero de Documentos V\u00e1lidos",
+    "nfes": "Valor Total das NFes",
+    "products": "Valor Total dos Produtos",
+    "items": "Total de Itens Processados",
+    "icms": "Valor Total de ICMS",
+    "pis": "Valor Total de PIS",
+    "cofins": "Valor Total de COFINS",
+    "iss": "Valor Total de ISS",
+    "iva": "Estimativa de IVA (Simulado)",
+}
+
 _METRIC_KEY_CANONICAL = {
-    "Numero de Documentos Validos": "\u004e\u00famero de Documentos V\u00e1lidos",
-    "Ngmero de Documentos Volidos": "\u004e\u00famero de Documentos V\u00e1lidos",
+    "Numero de Documentos Validos": _METRIC_LABELS["documents"],
+    "Ngmero de Documentos Volidos": _METRIC_LABELS["documents"],
+    _METRIC_LABELS["documents"]: _METRIC_LABELS["documents"],
+    _METRIC_LABELS["nfes"]: _METRIC_LABELS["nfes"],
+    _METRIC_LABELS["products"]: _METRIC_LABELS["products"],
+    _METRIC_LABELS["items"]: _METRIC_LABELS["items"],
+    _METRIC_LABELS["icms"]: _METRIC_LABELS["icms"],
+    _METRIC_LABELS["pis"]: _METRIC_LABELS["pis"],
+    _METRIC_LABELS["cofins"]: _METRIC_LABELS["cofins"],
+    _METRIC_LABELS["iss"]: _METRIC_LABELS["iss"],
+    _METRIC_LABELS["iva"]: _METRIC_LABELS["iva"],
 }
 
 
@@ -32,7 +53,7 @@ def _normalize_metric_keys(metrics: Dict[str, object]) -> Dict[str, object]:
     normalized: Dict[str, object] = {}
     for key, value in metrics.items():
         ascii_key = unicodedata.normalize("NFKD", key).encode("ascii", "ignore").decode("ascii")
-        canonical = _METRIC_KEY_CANONICAL.get(ascii_key, key)
+        canonical = _METRIC_KEY_CANONICAL.get(ascii_key, _METRIC_KEY_CANONICAL.get(key, key))
         normalized[canonical] = value
     return normalized
 
@@ -40,21 +61,21 @@ def _normalize_metric_keys(metrics: Dict[str, object]) -> Dict[str, object]:
 def _run_deterministic_accounting(report: AuditReport) -> Dict[str, object]:
     valid_docs = [doc for doc in report.documents if doc.status != doc.status.ERRO and doc.doc.data]
     metrics = {
-        "Número de Documentos Válidos": 0,
-        "Valor Total das NFes": _format_currency(0),
-        "Valor Total dos Produtos": _format_currency(0),
-        "Total de Itens Processados": 0,
-        "Valor Total de ICMS": _format_currency(0),
-        "Valor Total de PIS": _format_currency(0),
-        "Valor Total de COFINS": _format_currency(0),
-        "Valor Total de ISS": _format_currency(0),
-        "Estimativa de IVA (Simulado)": _format_currency(0),
+        _METRIC_LABELS["documents"]: 0,
+        _METRIC_LABELS["nfes"]: _format_currency(0),
+        _METRIC_LABELS["products"]: _format_currency(0),
+        _METRIC_LABELS["items"]: 0,
+        _METRIC_LABELS["icms"]: _format_currency(0),
+        _METRIC_LABELS["pis"]: _format_currency(0),
+        _METRIC_LABELS["cofins"]: _format_currency(0),
+        _METRIC_LABELS["iss"]: _format_currency(0),
+        _METRIC_LABELS["iva"]: _format_currency(0),
     }
     if not valid_docs:
         return _normalize_metric_keys(metrics)
 
     all_items = [item for doc in valid_docs for item in (doc.doc.data or [])]
-    unique_nfes = {}
+    unique_nfes: Dict[str, float] = {}
     for item in all_items:
         nfe_id = item.get("nfe_id")
         if not nfe_id:
@@ -71,26 +92,34 @@ def _run_deterministic_accounting(report: AuditReport) -> Dict[str, object]:
 
     total_nfe_value = sum(unique_nfes.values())
     if total_nfe_value == 0 and totals["totalProductValue"] > 0:
-        total_nfe_value = totals["totalProductValue"] + totals["totalICMS"] + totals["totalPIS"] + totals["totalCOFINS"] + totals["totalISS"]
+        total_nfe_value = (
+            totals["totalProductValue"]
+            + totals["totalICMS"]
+            + totals["totalPIS"]
+            + totals["totalCOFINS"]
+            + totals["totalISS"]
+        )
 
     total_iva = (totals["totalPIS"] + totals["totalCOFINS"]) * MOCK_ALIQUOTAS["IVA"]
 
     metrics.update(
         {
-            "Número de Documentos Válidos": len(unique_nfes) or len(valid_docs),
-            "Valor Total das NFes": _format_currency(total_nfe_value),
-            "Valor Total dos Produtos": _format_currency(totals["totalProductValue"]),
-            "Total de Itens Processados": len(all_items),
-            "Valor Total de ICMS": _format_currency(totals["totalICMS"]),
-            "Valor Total de PIS": _format_currency(totals["totalPIS"]),
-            "Valor Total de COFINS": _format_currency(totals["totalCOFINS"]),
-            "Valor Total de ISS": _format_currency(totals["totalISS"]),
-            "Estimativa de IVA (Simulado)": _format_currency(total_iva),
+            _METRIC_LABELS["documents"]: len(unique_nfes) or len(valid_docs),
+            _METRIC_LABELS["nfes"]: _format_currency(total_nfe_value),
+            _METRIC_LABELS["products"]: _format_currency(totals["totalProductValue"]),
+            _METRIC_LABELS["items"]: len(all_items),
+            _METRIC_LABELS["icms"]: _format_currency(totals["totalICMS"]),
+            _METRIC_LABELS["pis"]: _format_currency(totals["totalPIS"]),
+            _METRIC_LABELS["cofins"]: _format_currency(totals["totalCOFINS"]),
+            _METRIC_LABELS["iss"]: _format_currency(totals["totalISS"]),
+            _METRIC_LABELS["iva"]: _format_currency(total_iva),
         }
     )
 
     if total_nfe_value == 0 and all_items:
-        metrics["Alerta de Qualidade"] = "O valor total das NFes processadas é zero, indicando dados de origem inconsistentes."
+        metrics["Alerta de Qualidade"] = (
+            "O valor total das NFes processadas é zero, indicando dados de origem inconsistentes."
+        )
 
     return _normalize_metric_keys(metrics)
 
