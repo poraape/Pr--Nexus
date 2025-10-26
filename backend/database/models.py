@@ -7,11 +7,14 @@ from typing import Optional
 
 from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from backend.database import Base, engine
+from backend.core.config import settings
+from backend.database import Base
 
-if engine.dialect.name == "sqlite":  # pragma: no cover - exercised via tests
+_dialect = make_url(settings.sqlalchemy_sync_url).drivername
+if _dialect.startswith("sqlite"):  # pragma: no cover - exercised via tests
     JSONField = JSON
 else:  # pragma: no branch - default path in production
     JSONField = JSONB
