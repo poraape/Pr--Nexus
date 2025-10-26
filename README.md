@@ -1,3 +1,13 @@
+---
+title: Nexus QuantumI2A2
+emoji: 🧮
+colorFrom: indigo
+colorTo: green
+sdk: docker
+sdk_version: "0.0.1"
+app_file: start.sh
+pinned: false
+---
 # Nexus QuantumI2A2: Análise Fiscal com IA
 
 Nexus QuantumI2A2 é uma plataforma de auditoria fiscal que combina uma SPA React leve com um backend FastAPI orientado a agentes. O processamento de arquivos, regras fiscais, chamadas de IA e geração de relatórios é realizado exclusivamente no servidor, garantindo conformidade com o blueprint MAS distribuído.
@@ -249,3 +259,4 @@ Para escalar além do SQLite embarcado, siga os passos abaixo para usar um banco
 - Frontend não contém segredos; interage exclusivamente com a API.
 - Upload de arquivos agora é validado no cliente para aceitar somente formatos processados pelo backend (`components/FileUpload.tsx`).  
 - Recomenda-se habilitar HTTPS, secret management e autenticação no deployment final.
+
