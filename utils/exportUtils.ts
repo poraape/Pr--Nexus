@@ -1,380 +1,564 @@
 import dayjs from 'dayjs';
-import type { AuditReport, AuditedDocument } from '../types';
+import type {
+    AuditReport,
+    AuditedDocument,
+    AccountingEntry,
+    AIDrivenInsight,
+    DeterministicCrossValidationResult,
+    CrossValidationResult,
+} from '../types';
 
-// --- Helper Functions ---
+type HtmlExportTarget = HTMLElement;
 
 const saveAs = (blob: Blob, filename: string) => {
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
     URL.revokeObjectURL(url);
 };
 
-const getChartImages = async (element: HTMLElement): Promise<Map<HTMLElement, string>> => {
-    const { default: html2canvas } = await import('html2canvas');
-    const chartContainers = element.querySelectorAll('[data-chart-container="true"]');
-    const imageMap = new Map<HTMLElement, string>();
-    for (const container of Array.from(chartContainers)) {
-        try {
-            const canvas = await html2canvas(container as HTMLElement, {
-                backgroundColor: '#1f2937', // bg-gray-800
-                scale: 2,
-                logging: false,
-                useCORS: true,
-            });
-            imageMap.set(container as HTMLElement, canvas.toDataURL('image/png'));
-        } catch (error) {
-            console.error("Error generating canvas for chart:", error);
-        }
+const escapeAttribute = (value: string): string =>
+    value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+
+const cleanText = (value: string | undefined | null): string => (value ?? '').trim();
+
+const stripInvisible = (value: string): string =>
+    value.replace(/\s+/g, ' ').trim();
+
+const SELECTORS_TO_REMOVE = [
+    '.bg-gray-800.p-6.rounded-lg.shadow-lg',
+    '.bg-gray-800.p-6.rounded-lg.shadow-lg.animate-fade-in',
+    '[data-export-ignore="true"]',
+];
+
+const shouldSkipSection = (element: HTMLElement): boolean => {
+    if (element.getAttribute('data-export-title') === '') {
+        return true;
     }
-    return imageMap;
+    const stepHeader = element.querySelector('h2');
+    return (
+        !!element.closest('.bg-gray-800.p-6.rounded-lg.shadow-lg') &&
+        !!stepHeader &&
+        /^\d+\./.test(stepHeader.innerText)
+    );
 };
 
-// --- Export Functions ---
+const getChartImages = async (root: HTMLElement): Promise<Map<HTMLElement, HTMLImageElement>> => {
+    const { default: html2canvas } = await import('html2canvas');
+    const map = new Map<HTMLElement, HTMLImageElement>();
+    const containers = root.querySelectorAll('[data-chart-container="true"]');
+
+    for (const container of Array.from(containers)) {
+        try {
+            const canvas = await html2canvas(container as HTMLElement, {
+                backgroundColor: '#1f2937',
+                logging: false,
+                scale: 2,
+                useCORS: true,
+            });
+            const img = new Image();
+            img.src = canvas.toDataURL('image/png');
+            map.set(container as HTMLElement, img);
+        } catch (error) {
+            console.warn('Falha ao rasterizar gr\u00e1fico para exporta\u00e7\u00e3o.', error);
+        }
+    }
+    return map;
+};
+
+const normaliseInsightSeverity = (insight: AIDrivenInsight): string =>
+    insight.severity ?? 'INFO';
+
+const normaliseAccountingEntry = (entry: AccountingEntry): Record<string, string | number> => ({
+    Documento: entry.docName,
+    Conta: entry.account,
+    Tipo: entry.type,
+    Valor: entry.value,
+});
+
+const packDocuments = (report: AuditReport): Record<string, unknown>[] => {
+    const rows: Record<string, unknown>[] = [];
+    report.documents.forEach((doc: AuditedDocument) => {
+        if (!doc.doc.data || doc.doc.data.length === 0) {
+            rows.push({
+                Documento: doc.doc.name,
+                Status: doc.status,
+                Classificacao: doc.classification?.operationType ?? 'N/A',
+                Item: 'Sem itens',
+            });
+            return;
+        }
+        doc.doc.data.forEach(item => {
+            const flattened: Record<string, unknown> = {
+                Documento: doc.doc.name,
+                Status: doc.status,
+                Classificacao: doc.classification?.operationType ?? 'N/A',
+            };
+            Object.entries(item).forEach(([key, value]) => {
+                flattened[key] = value ?? '';
+            });
+            rows.push(flattened);
+        });
+    });
+    return rows;
+};
+
+const packInconsistencies = (report: AuditReport) =>
+    report.documents.flatMap(doc =>
+        doc.inconsistencies.map(inc => ({
+            Documento: doc.doc.name,
+            Severidade: inc.severity,
+            Codigo: inc.code,
+            Mensagem: inc.message,
+            Explicacao: inc.explanation,
+        })),
+    );
+
+const packDeterministicCrossValidation = (items: DeterministicCrossValidationResult[] | undefined) =>
+    (items ?? []).flatMap(result =>
+        result.discrepancies.map(discrepancy => ({
+            ChaveComparacao: result.comparisonKey,
+            Atributo: result.attribute,
+            Descricao: result.description,
+            Severidade: result.severity,
+            ValorA: discrepancy.valueA,
+            DocumentoA: JSON.stringify(discrepancy.docA),
+            ValorB: discrepancy.valueB,
+            DocumentoB: JSON.stringify(discrepancy.docB),
+        })),
+    );
+
+const packCrossValidation = (items: CrossValidationResult[] | undefined) =>
+    (items ?? []).map(result => ({
+        Atributo: result.attribute,
+        Observacao: result.observation,
+        Documentos: (result.documents ?? []).map(doc => JSON.stringify(doc)).join('; '),
+    }));
+
+const packInsights = (insights: AIDrivenInsight[] | undefined) =>
+    (insights ?? []).map(insight => ({
+        Categoria: insight.category,
+        Severidade: normaliseInsightSeverity(insight),
+        Descricao: insight.description,
+        Evidencias: (insight.evidence ?? []).join('; '),
+    }));
 
 export const exportToJson = async (report: AuditReport, filename: string) => {
-    const jsonContent = JSON.stringify(report, null, 2);
-    const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8' });
+    const blob = new Blob([JSON.stringify(report, null, 2)], {
+        type: 'application/json;charset=utf-8',
+    });
     saveAs(blob, `${filename}.json`);
 };
 
 export const exportToXlsx = async (report: AuditReport, filename: string) => {
     const { utils, writeFile } = await import('xlsx');
-    const wb = utils.book_new();
+    const workbook = utils.book_new();
 
-    // Summary Sheet
-    const summaryData = [
-        ['Título', report.summary.title],
-        ['Resumo', report.summary.summary],
-        [],
-        ['Métricas Chave'],
-        ['Métrica', 'Valor', 'Insight'],
-        ...report.summary.keyMetrics.map(m => [m.metric, m.value, m.insight]),
-        [],
-        ['Insights Acionáveis'],
-        ...report.summary.actionableInsights.map(i => [i]),
-        [],
-        ['Recomendações Estratégicas'],
-        ...(report.summary.strategicRecommendations || []).map(r => [r])
-    ];
-    const wsSummary = utils.aoa_to_sheet(summaryData);
-    utils.book_append_sheet(wb, wsSummary, 'Resumo Executivo');
+    const summary = report.summary ?? {
+        title: 'Relatorio Fiscal',
+        summary: '',
+        keyMetrics: [],
+        actionableInsights: [],
+        strategicRecommendations: [],
+    };
 
-    // Document Details Sheet
-    const docDetailsData = report.documents.flatMap(d => {
-        if (!d.doc.data || d.doc.data.length === 0) {
-            // FIX: Added 'Classificação' to ensure a consistent object shape, resolving the type error.
-            return [{ 
-                Documento: d.doc.name, 
-                Status: d.status, 
-                Classificação: d.classification?.operationType || 'N/A',
-                "Nome Produto": "N/A - Sem itens" 
-            }];
-        }
-        return d.doc.data.map(item => ({
-            Documento: d.doc.name,
-            Status: d.status,
-            Classificação: d.classification?.operationType,
-            ...item
-        }));
-    });
-    if(docDetailsData.length > 0) {
-        const wsDocs = utils.json_to_sheet(docDetailsData);
-        utils.book_append_sheet(wb, wsDocs, 'Detalhes dos Itens');
+    const summarySheet = utils.aoa_to_sheet([
+        ['T\u00edtulo', summary.title ?? ''],
+        ['Resumo', summary.summary ?? ''],
+        [],
+        ['M\u00e9tricas Chave'],
+        ['M\u00e9trica', 'Valor', 'Insight'],
+        ...(summary.keyMetrics ?? []).map(metric => [
+            metric.metric,
+            metric.value,
+            metric.insight,
+        ]),
+        [],
+        ['Insights Acion\u00e1veis'],
+        ...((summary.actionableInsights ?? []).map(item => [item])),
+        [],
+        ['Recomenda\u00e7\u00f5es Estrat\u00e9gicas'],
+        ...((summary.strategicRecommendations ?? []).map(item => [item])),
+    ]);
+    utils.book_append_sheet(workbook, summarySheet, 'Resumo');
+
+    const docsSheetData = packDocuments(report);
+    if (docsSheetData.length > 0) {
+        utils.book_append_sheet(workbook, utils.json_to_sheet(docsSheetData), 'Documentos');
     }
 
-    // Inconsistencies Sheet
-    const inconsistenciesData = report.documents.flatMap(d =>
-        d.inconsistencies.map(inc => ({
-            Documento: d.doc.name,
-            Severidade: inc.severity,
-            Código: inc.code,
-            Mensagem: inc.message,
-            Explicação: inc.explanation,
-        }))
-    );
-    if(inconsistenciesData.length > 0) {
-        const wsInconsistencies = utils.json_to_sheet(inconsistenciesData);
-        utils.book_append_sheet(wb, wsInconsistencies, 'Inconsistências');
+    const inconsistencies = packInconsistencies(report);
+    if (inconsistencies.length > 0) {
+        utils.book_append_sheet(
+            workbook,
+            utils.json_to_sheet(inconsistencies),
+            'Inconsistencias',
+        );
     }
 
-    writeFile(wb, `${filename}.xlsx`);
+    const accounting = (report.accountingEntries ?? []).map(normaliseAccountingEntry);
+    if (accounting.length > 0) {
+        utils.book_append_sheet(
+            workbook,
+            utils.json_to_sheet(accounting),
+            'Lancamentos',
+        );
+    }
+
+    const aiInsights = packInsights(report.aiDrivenInsights);
+    if (aiInsights.length > 0) {
+        utils.book_append_sheet(workbook, utils.json_to_sheet(aiInsights), 'Insights IA');
+    }
+
+    const aiCrossValidation = packCrossValidation(report.crossValidationResults);
+    if (aiCrossValidation.length > 0) {
+        utils.book_append_sheet(workbook, utils.json_to_sheet(aiCrossValidation), 'Validador IA');
+    }
+
+    const deterministicCv = packDeterministicCrossValidation(report.deterministicCrossValidation);
+    if (deterministicCv.length > 0) {
+        utils.book_append_sheet(
+            workbook,
+            utils.json_to_sheet(deterministicCv),
+            'Validador Deterministico',
+        );
+    }
+
+    writeFile(workbook, `${filename}.xlsx`);
 };
 
-export const exportToMarkdown = async (element: HTMLElement, filename: string) => {
-    let markdown = '';
-    
-    element.querySelectorAll('h2, h3, h4, p, li').forEach(el => {
-        const tagName = el.tagName.toLowerCase();
-        const text = (el as HTMLElement).innerText || '';
-
-        if (tagName === 'h2' && text.match(/^\d\./)) return; // Skip step headers like "1. Upload"
-        if (tagName === 'h2') markdown += `## ${text}\n\n`;
-        else if (tagName === 'h3') markdown += `### ${text}\n\n`;
-        else if (tagName === 'h4') markdown += `#### ${text}\n\n`;
-        else if (tagName === 'p') markdown += `${text}\n\n`;
-        else if (tagName === 'li') markdown += `* ${text}\n`;
+export const exportToMarkdown = async (element: HtmlExportTarget, filename: string) => {
+    const lines: string[] = [];
+    element.querySelectorAll('h1, h2, h3, h4, p, li').forEach(node => {
+        const el = node as HTMLElement;
+        if (shouldSkipSection(el)) {
+            return;
+        }
+        const text = cleanText(el.innerText);
+        if (!text) {
+            return;
+        }
+        switch (el.tagName.toLowerCase()) {
+            case 'h1':
+                lines.push(`# ${text}`);
+                break;
+            case 'h2':
+                if (!/^\d+\./.test(text)) {
+                    lines.push(`## ${text}`);
+                }
+                break;
+            case 'h3':
+                lines.push(`### ${text}`);
+                break;
+            case 'h4':
+                lines.push(`#### ${text}`);
+                break;
+            case 'li':
+                lines.push(`- ${text}`);
+                break;
+            default:
+                lines.push(text);
+                break;
+        }
+        if (['p', 'h1', 'h2', 'h3', 'h4'].includes(el.tagName.toLowerCase())) {
+            lines.push('');
+        }
     });
 
-    const blob = new Blob([markdown.trim()], { type: 'text/markdown;charset=utf-8' });
+    const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' });
     saveAs(blob, `${filename}.md`);
 };
 
-export const exportToHtml = async (element: HTMLElement, filename: string, title: string) => {
-    const contentClone = element.cloneNode(true) as HTMLElement;
-    
-    // Remove file upload and progress tracker from clone
-    contentClone.querySelector('.bg-gray-800.p-6.rounded-lg.shadow-lg')?.remove();
-    contentClone.querySelector('.bg-gray-800.p-6.rounded-lg.shadow-lg.animate-fade-in')?.remove();
-
-    const imageMap = await getChartImages(element);
-    
-    const clonedCharts = contentClone.querySelectorAll('[data-chart-container="true"]');
+export const exportToHtml = async (
+    element: HtmlExportTarget,
+    filename: string,
+    title: string,
+) => {
+    const clone = element.cloneNode(true) as HTMLElement;
+    SELECTORS_TO_REMOVE.forEach(selector => clone.querySelector(selector)?.remove());
+    const chartImages = await getChartImages(element);
     const originalCharts = Array.from(element.querySelectorAll('[data-chart-container="true"]'));
+    const clonedCharts = clone.querySelectorAll('[data-chart-container="true"]');
 
-    clonedCharts.forEach((clonedChart, index) => {
-        const originalChart = originalCharts[index] as HTMLElement;
-        const imgDataUrl = imageMap.get(originalChart);
-        if (imgDataUrl) {
-            const img = document.createElement('img');
-            img.src = imgDataUrl;
+    clonedCharts.forEach((chart, index) => {
+        const original = originalCharts[index] as HTMLElement;
+        const img = chartImages.get(original);
+        if (img) {
+            img.style.maxWidth = '520px';
             img.style.width = '100%';
-            img.style.maxWidth = '500px';
-            img.style.marginTop = '1rem';
             img.style.border = '1px solid #4b5563';
             img.style.borderRadius = '8px';
-            clonedChart.replaceWith(img);
+            chart.replaceWith(img);
         }
     });
 
-    const htmlContent = `
-        <!DOCTYPE html>
-        <html lang="pt-BR">
-        <head>
-            <meta charset="UTF-8">
-            <title>${title}</title>
-            <style>
-                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #e5e7eb; background-color: #111827; max-width: 800px; margin: 20px auto; padding: 20px; }
-                h1, h2, h3, h4 { color: #ffffff; border-bottom: 1px solid #4b5563; padding-bottom: 8px; }
-                h1 { font-size: 2em; } h2 { font-size: 1.5em; } h3 { font-size: 1.25em; }
-                .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; }
-                .metric { background-color: #1f2937; padding: 1rem; border-radius: 8px; }
-                .chat-message { padding: 1rem; border-radius: 8px; margin-bottom: 1rem; max-width: 80%; }
-                .user-message { background-color: #2563eb; color: white; margin-left: auto; border-bottom-right-radius: 0; }
-                .ai-message { background-color: #374151; color: #d1d5db; border-bottom-left-radius: 0; }
-            </style>
-        </head>
-        <body>
-            <h1>${title}</h1>
-            ${contentClone.innerHTML}
-        </body>
-        </html>
-    `;
-    const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+    const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+    <head>
+        <meta charset="UTF-8">
+        <title>${escapeAttribute(title)}</title>
+        <style>
+            :root { color-scheme: dark; }
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #0f172a; color: #e2e8f0; max-width: 960px; margin: 32px auto; padding: 32px; }
+            h1, h2, h3, h4 { color: #f8fafc; border-bottom: 1px solid #334155; padding-bottom: 8px; margin-top: 32px; }
+            section, article, div { margin-bottom: 16px; }
+            table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+            th, td { border: 1px solid #334155; padding: 8px 12px; text-align: left; }
+            th { background: #1f2937; }
+            img { margin-top: 16px; }
+        </style>
+    </head>
+    <body>
+        <h1>${escapeAttribute(title)}</h1>
+        ${clone.innerHTML}
+    </body>
+</html>`;
+
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     saveAs(blob, `${filename}.html`);
 };
 
-export const exportToPdf = async (element: HTMLElement, filename: string, title: string) => {
-    const pdfMake = await import('pdfmake/build/pdfmake');
-    const pdfFonts = await import('pdfmake/build/vfs_fonts');
-    pdfMake.vfs = pdfFonts.pdfMake.vfs;
-    
-    const today = dayjs().format('DD/MM/YYYY');
-    const imageMap = await getChartImages(element);
-
-    const titlePage = {
-        stack: [
-            { text: title, style: 'mainTitle', alignment: 'center' },
-            { text: 'Relatório de Análise Fiscal', style: 'subtitle', alignment: 'center' },
-            { text: `\n\nGerado em: ${today}`, style: 'meta', alignment: 'center' },
-            { text: 'Assinado por: Nexus QuantumI2A2', style: 'meta', alignment: 'center' },
-        ],
-        // Trick to vertically center content
-        absolutePosition: { x: 40, y: 250 },
-    };
-    
-    const content: any[] = [titlePage, { text: '', pageBreak: 'after' }];
-
-    const parseNode = (node: ChildNode) => {
-        if (node.nodeType === Node.TEXT_NODE) {
-            return { text: node.textContent || '' };
-        }
-        if (node.nodeType !== Node.ELEMENT_NODE) return null;
-
-        const el = node as HTMLElement;
-        const tagName = el.tagName.toLowerCase();
-        
-        // Skip non-exportable content
-        if (el.closest('.bg-gray-800.p-6.rounded-lg.shadow-lg')) {
-           const h2 = el.querySelector('h2');
-           if (h2 && h2.innerText.startsWith('1.')) return null;
-        }
-
-        if (el.getAttribute('data-export-title') === '') {
-            return null; // Skip main title from body as it is on the cover page
-        }
-
-        if (el.getAttribute('data-chart-container') === 'true' && imageMap.has(el)) {
-            return { image: imageMap.get(el)!, width: 500, style: 'chart' };
-        }
-        
-        const children: any[] = [];
-        el.childNodes.forEach(child => {
-            const parsedChild = parseNode(child);
-            if (parsedChild) children.push(parsedChild);
-        });
-
-        switch (tagName) {
-            case 'h2':
-                if (el.innerText.match(/^\d\./)) return null;
-                return { text: el.innerText, style: 'h2' };
-            case 'h3': return { text: el.innerText, style: 'h3' };
-            case 'h4': return { text: el.innerText, style: 'h4' };
-            case 'p': return { text: el.innerText, style: 'paragraph' };
-            case 'li': return { text: el.innerText };
-            case 'ul': return { ul: children, style: 'list' };
-            case 'strong': return { text: el.innerText, bold: true };
-            case 'div':
-                if (el.classList.contains('prose')) { // Chat message content
-                    return { text: el.innerText, style: 'paragraph' };
-                }
-                return children.length === 1 ? children[0] : { stack: children };
-            default:
-                return children.length > 0 ? { stack: children } : null;
-        }
-    };
-    
-    element.childNodes.forEach(node => {
-        const parsed = parseNode(node);
-        if (parsed) content.push(parsed);
-    });
-
-    const docDefinition = {
-        content,
-        styles: {
-            mainTitle: { fontSize: 28, bold: true, margin: [0, 0, 0, 10] },
-            subtitle: { fontSize: 16, italics: true, margin: [0, 0, 0, 20] },
-            meta: { fontSize: 10, color: '#888888', margin: [0, 2, 0, 2]},
-            header: { fontSize: 22, bold: true, margin: [0, 0, 0, 10] },
-            h2: { fontSize: 18, bold: true, margin: [0, 15, 0, 5] },
-            h3: { fontSize: 16, bold: true, margin: [0, 10, 0, 5] },
-            h4: { fontSize: 14, bold: true, margin: [0, 10, 0, 5] },
-            paragraph: { fontSize: 10, margin: [0, 5, 0, 5] },
-            list: { margin: [10, 5, 0, 5] },
-            chart: { margin: [0, 10, 0, 10], alignment: 'center' },
-        },
-        defaultStyle: {
-            fontSize: 10,
-        }
-    };
-
-    pdfMake.createPdf(docDefinition).download(`${filename}.pdf`);
+const ensurePdfFonts = async (pdfMake: any) => {
+    const pdfFontsModule = await import('pdfmake/build/vfs_fonts');
+    const fonts: any = pdfFontsModule.default || pdfFontsModule;
+    if (fonts.pdfMake?.vfs) {
+        pdfMake.vfs = fonts.pdfMake.vfs;
+    } else if (fonts.vfs) {
+        pdfMake.vfs = fonts.vfs;
+    } else {
+        throw new Error('N\u00e3o foi poss\u00edvel carregar as fontes do pdfmake.');
+    }
 };
 
-export const exportToDocx = async (element: HTMLElement, filename:string, title: string) => {
-    const docx = await import('docx');
-    const { Document, Packer, Paragraph, TextRun, ImageRun, HeadingLevel, AlignmentType, PageBreak } = docx;
-    
-    const today = dayjs().format('DD/MM/YYYY');
-    const imageMap = await getChartImages(element);
-    const imageBuffers = new Map<HTMLElement, ArrayBuffer>();
-    for (const [el, dataUrl] of imageMap.entries()) {
-        const res = await fetch(dataUrl);
-        imageBuffers.set(el, await res.arrayBuffer());
-    }
+export const exportToPdf = async (
+    element: HtmlExportTarget,
+    filename: string,
+    title: string,
+) => {
+    const pdfMakeModule = await import('pdfmake/build/pdfmake');
+    const pdfMake: any = pdfMakeModule.default || pdfMakeModule;
+    await ensurePdfFonts(pdfMake);
 
-    const parseNodeToDocx = (node: Node): any[] => {
+    const chartImages = await getChartImages(element);
+    const today = dayjs().format('DD/MM/YYYY');
+
+    const parseNode = (node: ChildNode): any => {
         if (node.nodeType === Node.TEXT_NODE) {
-            return [new TextRun(node.textContent || '')];
+            const text = stripInvisible(node.textContent ?? '');
+            return text ? { text } : null;
         }
-        if (node.nodeType !== Node.ELEMENT_NODE) return [];
+        if (node.nodeType !== Node.ELEMENT_NODE) {
+            return null;
+        }
 
         const el = node as HTMLElement;
-
-        // Skip non-exportable content
-        if (el.closest('.bg-gray-800.p-6.rounded-lg.shadow-lg')) {
-           const h2 = el.querySelector('h2');
-           if (h2 && h2.innerText.startsWith('1.')) return [];
+        if (shouldSkipSection(el)) {
+            return null;
         }
 
-        if (el.getAttribute('data-export-title') === '') {
-            return []; // Skip main title from body
+        if (el.getAttribute('data-chart-container') === 'true') {
+            const img = chartImages.get(el);
+            if (img) {
+                return { image: img.src, width: 520, margin: [0, 12, 0, 12] };
+            }
         }
 
-        let children: any[] = [];
+        const children: any[] = [];
         el.childNodes.forEach(child => {
-            children.push(...parseNodeToDocx(child));
+            const parsed = parseNode(child);
+            if (parsed) {
+                children.push(parsed);
+            }
         });
 
-        const tagName = el.tagName.toLowerCase();
-        
-        if (el.getAttribute('data-chart-container') === 'true' && imageBuffers.has(el)) {
-            return [new Paragraph({
-                children: [new ImageRun({
-                    data: imageBuffers.get(el)!,
-                    transformation: { width: 500, height: 280 },
-                })]
-            })];
+        const tag = el.tagName.toLowerCase();
+        switch (tag) {
+            case 'h2':
+                if (/^\d+\./.test(el.innerText)) return null;
+                return { text: cleanText(el.innerText), style: 'h2' };
+            case 'h3':
+                return { text: cleanText(el.innerText), style: 'h3' };
+            case 'h4':
+                return { text: cleanText(el.innerText), style: 'h4' };
+            case 'p':
+                return { text: cleanText(el.innerText), style: 'paragraph' };
+            case 'li':
+                return cleanText(el.innerText);
+            case 'ul':
+                return { ul: children.filter(Boolean), style: 'list' };
+            case 'table':
+            case 'thead':
+            case 'tbody':
+                return null;
+            default:
+                return children.length === 1 ? children[0] : { stack: children };
+        }
+    };
+
+    const content: any[] = [
+        {
+            stack: [
+                { text: title, style: 'title' },
+                { text: 'Relat\u00f3rio de An\u00e1lise Fiscal', style: 'subtitle' },
+                { text: `Gerado em ${today}`, style: 'meta' },
+            ],
+            margin: [0, 160, 0, 40],
+        },
+        { text: '', pageBreak: 'after' },
+    ];
+
+    element.childNodes.forEach(node => {
+        const parsed = parseNode(node);
+        if (parsed) {
+            content.push(parsed);
+        }
+    });
+
+    const definition = {
+        content,
+        styles: {
+            title: { fontSize: 24, bold: true, alignment: 'center', color: '#22d3ee' },
+            subtitle: { fontSize: 16, italics: true, alignment: 'center', margin: [0, 8, 0, 8] },
+            meta: { fontSize: 10, color: '#94a3b8', alignment: 'center' },
+            h2: { fontSize: 18, bold: true, margin: [0, 18, 0, 6] },
+            h3: { fontSize: 16, bold: true, margin: [0, 12, 0, 6] },
+            h4: { fontSize: 14, bold: true, margin: [0, 10, 0, 6] },
+            paragraph: { fontSize: 10, margin: [0, 4, 0, 8] },
+            list: { margin: [12, 4, 0, 8], fontSize: 10 },
+        },
+        defaultStyle: { fontSize: 10 },
+    };
+
+    pdfMake.createPdf(definition).download(`${filename}.pdf`);
+};
+
+export const exportToDocx = async (
+    element: HtmlExportTarget,
+    filename: string,
+    title: string,
+) => {
+    const docx = await import('docx');
+    const {
+        AlignmentType,
+        Document,
+        HeadingLevel,
+        ImageRun,
+        Paragraph,
+        Packer,
+        TextRun,
+        PageBreak,
+    } = docx;
+
+    const chartImages = await getChartImages(element);
+    const imageBuffers = new Map<HTMLElement, ArrayBuffer>();
+    for (const [el, img] of chartImages.entries()) {
+        const response = await fetch(img.src);
+        imageBuffers.set(el, await response.arrayBuffer());
+    }
+
+    const parseNode = (node: ChildNode): any[] => {
+        if (node.nodeType === Node.TEXT_NODE) {
+            const text = cleanText(node.textContent ?? '');
+            return text ? [new TextRun(text)] : [];
+        }
+        if (node.nodeType !== Node.ELEMENT_NODE) {
+            return [];
         }
 
-        switch (tagName) {
-            case 'h2': 
-                if (el.innerText.match(/^\d\./)) return [];
-                return [new Paragraph({ heading: HeadingLevel.HEADING_2, children })];
-            case 'h3': return [new Paragraph({ heading: HeadingLevel.HEADING_3, children })];
-            case 'h4': return [new Paragraph({ heading: HeadingLevel.HEADING_4, children })];
-            case 'p': return [new Paragraph({ children })];
-            case 'li': return [new Paragraph({ bullet: { level: 0 }, children })];
-            case 'strong':
-            case 'b':
-                children.forEach(c => { if(c.options) c.options.bold = true; });
-                return children;
+        const el = node as HTMLElement;
+        if (shouldSkipSection(el)) {
+            return [];
+        }
+
+        if (el.getAttribute('data-chart-container') === 'true' && imageBuffers.has(el)) {
+            return [
+                new Paragraph({
+                    children: [
+                        new ImageRun({
+                            data: imageBuffers.get(el)!,
+                            transformation: { width: 500, height: 280 },
+                        }),
+                    ],
+                    spacing: { after: 200 },
+                }),
+            ];
+        }
+
+        const children = Array.from(el.childNodes).flatMap(parseNode);
+
+        switch (el.tagName.toLowerCase()) {
+            case 'h2':
+                if (/^\d+\./.test(el.innerText)) return [];
+                return [
+                    new Paragraph({
+                        heading: HeadingLevel.HEADING_2,
+                        children,
+                        spacing: { before: 260, after: 160 },
+                    }),
+                ];
+            case 'h3':
+                return [
+                    new Paragraph({
+                        heading: HeadingLevel.HEADING_3,
+                        children,
+                        spacing: { before: 200, after: 140 },
+                    }),
+                ];
+            case 'h4':
+                return [
+                    new Paragraph({
+                        heading: HeadingLevel.HEADING_4,
+                        children,
+                        spacing: { before: 160, after: 120 },
+                    }),
+                ];
+            case 'p':
+                return [
+                    new Paragraph({
+                        children,
+                        spacing: { after: 160 },
+                    }),
+                ];
+            case 'li':
+                return [
+                    new Paragraph({
+                        children,
+                        bullet: { level: 0 },
+                        spacing: { after: 80 },
+                    }),
+                ];
             default:
-                // Handle divs that might contain paragraphs
-                 if (children.some(c => c instanceof Paragraph)) return children;
-                 // Handle simple text divs as paragraphs
-                 if (children.every(c => c instanceof TextRun)) return [new Paragraph({ children })];
                 return children;
         }
     };
-    
+
+    const today = dayjs().format('DD/MM/YYYY');
     const titlePage = [
         new Paragraph({
-            children: [new TextRun({ text: title, size: 56, bold: true })],
+            text: title,
             heading: HeadingLevel.TITLE,
             alignment: AlignmentType.CENTER,
-            spacing: { after: 200 }
+            spacing: { after: 360 },
         }),
         new Paragraph({
-            children: [new TextRun({ text: 'Relatório de Análise Fiscal', size: 28, italics: true })],
+            text: 'Relat\u00f3rio de An\u00e1lise Fiscal',
             alignment: AlignmentType.CENTER,
-            spacing: { after: 400 }
+            spacing: { after: 240 },
         }),
         new Paragraph({
-            children: [new TextRun({ text: `Gerado em: ${today}`, size: 22 })],
-            alignment: AlignmentType.CENTER,
-        }),
-         new Paragraph({
-            children: [new TextRun({ text: 'Assinado por: Nexus QuantumI2A2', size: 22 })],
+            text: `Gerado em: ${today}`,
             alignment: AlignmentType.CENTER,
         }),
         new Paragraph({ children: [new PageBreak()] }),
     ];
-    
-    const docChildren: any[] = [...titlePage];
-    element.childNodes.forEach(node => {
-        docChildren.push(...parseNodeToDocx(node));
-    });
 
+    const children = Array.from(element.childNodes).flatMap(parseNode);
     const doc = new Document({
-        sections: [{
-            properties: {},
-            children: docChildren.flat(),
-        }],
+        sections: [{ properties: {}, children: [...titlePage, ...children] }],
     });
 
     const blob = await Packer.toBlob(doc);
