@@ -89,7 +89,7 @@ python -m backend.worker_main
 
 ```bash
 npm install
-VITE_BACKEND_URL=http://localhost:8000 npm run dev -- --host 0.0.0.0 --port 5173
+npm run dev -- --host 0.0.0.0 --port 5173
 ```
 
 A aplicação estará em `http://localhost:5173`.
@@ -159,7 +159,7 @@ Os antigos agentes TypeScript client-side foram removidos (agora toda a lógica 
 | `GEMINI_API_KEY` | Condicional | Obrigatória quando `LLM_PROVIDER=gemini` ou `hybrid`. |
 | `DEEPSEEK_API_KEY` | Condicional | Obrigatória quando `LLM_PROVIDER=deepseek` ou `hybrid`. |
 | `FRONTEND_ORIGIN` | Sim | Origin autorizado para CORS. |
-| `VITE_BACKEND_URL` (frontend) | Sim | URL do gateway FastAPI consumida pelo SPA. |
+| `VITE_BACKEND_URL` (frontend) | Opcional | URL do gateway FastAPI consumida pelo SPA. Use `self` (padrao) para reaproveitar host/porta do SPA. |
 
 ---
 
@@ -198,11 +198,19 @@ Um workflow GitHub Actions (`.github/workflows/deploy.yml`) automatiza testes, b
 
 ### Configuração necessária
 
-Crie os seguintes segredos no repositório GitHub:
+### Provisionamento da Space (modo gratuito)
 
-| Segredo | Descrição |
+- Crie a Space no Hugging Face como `Docker` e selecione o hardware gratuito `CPU Basic`; o arquivo `space.yaml` ja define `app_port=7860` para a execucao direta do container.
+- Em *Settings -> Variables & secrets* cadastre `GEMINI_API_KEY` (usa o modelo gratuito `gemini-1.5-flash-8b`) e, se quiser fixar explicitamente, adicione `LLM_PROVIDER=gemini` e `GEMINI_MODEL=gemini-1.5-flash-8b`.
+- Nao e preciso banco externo: SQLite, Chroma e uploads persistem em `/data`; use *Factory reset* na Space para limpar o estado quando desejar.
+- O script `start.sh` prepara diretorios, aplica Alembic, configura o runtime `PORT` e sobe o `uvicorn` com `--proxy-headers`, garantindo compatibilidade com o proxy da plataforma.
+- O primeiro build consome ~10 minutos porque instala OCR (`tesseract` + `poppler`); releases seguintes aproveitam o cache Docker mantido pela Hugging Face.
+
+Crie os seguintes segredos no repositorio GitHub:
+
+| Segredo | Descricao |
 | --- | --- |
-| `HF_TOKEN` | Token da conta no Hugging Face com permissão de escrita na Space. |
+| `HF_TOKEN` | Token da conta no Hugging Face com permissao de escrita na Space. |
 | `HF_SPACE_ID` | Identificador completo da Space (`usuario/nome-da-space`). |
 
 ### Fluxo de atualização

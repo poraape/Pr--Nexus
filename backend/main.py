@@ -58,7 +58,7 @@ else:  # pragma: no cover - depends on deployment setup
     )
 
 
-def _ensure_directories() -> None:
+def ensure_runtime_directories() -> None:
     for directory in settings.directories_to_ensure:
         directory.mkdir(parents=True, exist_ok=True)
         logger.info("Ensured persistence directory exists: %s", directory)
@@ -75,7 +75,7 @@ def _run_migrations() -> None:
 
 
 def _bootstrap_database() -> None:
-    _ensure_directories()
+    ensure_runtime_directories()
     _run_migrations()
     Base.metadata.create_all(bind=engine)
     logger.info("Database schema ensured")

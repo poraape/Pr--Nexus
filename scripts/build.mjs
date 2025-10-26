@@ -11,7 +11,7 @@ const projectRoot = path.resolve(__dirname, '..');
 const env = { ...process.env };
 
 if (!env.VITE_BACKEND_URL || env.VITE_BACKEND_URL.trim() === '') {
-  env.VITE_BACKEND_URL = 'http://localhost:8000';
+  env.VITE_BACKEND_URL = 'self';
 }
 
 if (!env.FRONTEND_ORIGIN || env.FRONTEND_ORIGIN.trim() === '') {
