@@ -164,11 +164,61 @@ O backend possui testes PyTest para agentes e grafo (`backend/tests/*`). Execute
 pytest backend/tests
 ```
 
+> Nota: os testes definem `DISABLE_CONSULTANT_AGENT=1` para evitar chamadas externas ao inicializar o consultor de IA.
+
+---
+
+## Observabilidade e disponibilidade
+
+- **Endpoint de saúde:** `GET /health` responde `{ "status": "ok" }` a partir do `backend/main.py`, permitindo que load balancers e monitores verifiquem se a API está ativa.
+- **Script keep-alive opcional:** para evitar que a Space hiberne, execute periodicamente o utilitário `scripts/keep_alive.py`, que realiza pings no endpoint de saúde.
+
+```bash
+python scripts/keep_alive.py --url https://<sua-space>.hf.space --interval 600
+```
+
+Variáveis de ambiente (`SPACE_URL`, `SPACE_HEALTH_ENDPOINT`, `SPACE_PING_INTERVAL`, `SPACE_PING_TIMEOUT`) também podem ser usadas para configurar o script em serviços externos de cron.
+
+---
+
+## CI/CD e deploy para Hugging Face Space
+
+Um workflow GitHub Actions (`.github/workflows/deploy.yml`) automatiza testes, build e deploy:
+
+1. **Lint opcional:** roda `ruff` e `mypy` (não bloqueia o pipeline, apenas antecipa falhas).
+2. **Testes e build:** instala dependências Python, executa `pytest backend/tests`, instala dependências do frontend (`npm ci`) e roda `npm run build`.
+3. **Deploy:** em pushes para `main`, usa a action `huggingface/space-pusher` para enviar o repositório para a Space configurada.
+
+### Configuração necessária
+
+Crie os seguintes segredos no repositório GitHub:
+
+| Segredo | Descrição |
+| --- | --- |
+| `HF_TOKEN` | Token da conta no Hugging Face com permissão de escrita na Space. |
+| `HF_SPACE_ID` | Identificador completo da Space (`usuario/nome-da-space`). |
+
+### Fluxo de atualização
+
+1. Faça commits das alterações.
+2. Envie para o branch principal: `git push origin main`.
+3. Aguarde o workflow concluir (`CI and Deploy to Space`). Ao final, a Space é atualizada automaticamente.
+
+Para builds manuais (ex.: hotfix), abra a aba *Actions* no GitHub e dispare `CI and Deploy to Space` via `Run workflow`.
+
+### Rollback
+
+- Identifique o commit saudável (`git log`).
+- Recrie o estado desejado (`git revert <sha>` ou `git checkout <sha> && git push origin HEAD:main`).
+- O push aciona novamente o workflow, publicando a versão anterior na Space.
+
+Se a Space precisar ser reimplantada sem alterações de código, execute o workflow manualmente ou utilize `huggingface-cli repo push` com o commit conhecido.
+
 ---
 
 ## Segurança
 
-- Chaves de LLM são carregadas apenas no backend via variáveis de ambiente (`backend/core/config.py`).  
-- Frontend não contém segredos; interage exclusivamente com a API.  
+- Chaves de LLM são carregadas apenas no backend via variáveis de ambiente (`backend/core/config.py`).
+- Frontend não contém segredos; interage exclusivamente com a API.
 - Upload de arquivos agora é validado no cliente para aceitar somente formatos processados pelo backend (`components/FileUpload.tsx`).  
 - Recomenda-se habilitar HTTPS, secret management e autenticação no deployment final.

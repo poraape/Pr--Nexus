@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -26,14 +27,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1")
 
 _settings = get_settings()
+_consultant_disabled = os.getenv("DISABLE_CONSULTANT_AGENT") == "1"
 
-try:
-    _llm_client = LLMClient(_settings)
-except LLMClientError as exc:  # pragma: no cover - hard failure
-    logger.exception("Failed to initialize LLM client")
-    raise
+if not _consultant_disabled:
+    try:
+        _llm_client = LLMClient(_settings)
+    except LLMClientError as exc:  # pragma: no cover - hard failure
+        logger.exception("Failed to initialize LLM client")
+        raise
 
-_agent = ConsultantAgent(_settings, llm_client=_llm_client)
+    _agent: Optional[ConsultantAgent] = ConsultantAgent(_settings, llm_client=_llm_client)
+else:  # pragma: no cover - only used in constrained test environments
+    _llm_client = None
+    _agent = None
 _storage = FileStorage(_settings.storage_path)
 _status_repository = SQLAlchemyStatusRepository()
 _report_repository = SQLAlchemyReportRepository()
@@ -146,6 +152,9 @@ def chat_stream(encoded_payload: str = Query(..., alias="payload")) -> Response:
 
 @router.post("/llm/generate-json", tags=["consultant"])
 def generate_json(payload: GenerateJsonRequest) -> Response:
+    if _llm_client is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="LLM indisponível no momento.")
+
     try:
         raw_response = _llm_client.generate(
             payload.prompt,
@@ -164,6 +173,9 @@ def generate_json(payload: GenerateJsonRequest) -> Response:
 
 
 def _handle_chat(payload: ChatRequest) -> Response:
+    if _agent is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Consultor indisponível no momento.")
+
     try:
         if payload.report:
             _agent.index_report(
