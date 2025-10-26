@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import sqlalchemy as sa
-from alembic import op
+from alembic import context, op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
@@ -13,8 +13,13 @@ depends_on = None
 
 
 def upgrade() -> None:
-    bind = op.get_bind()
-    dialect_name = bind.dialect.name if bind is not None else "postgresql"
+    ctx = context.get_context()
+    if ctx is not None:
+        dialect_name = ctx.dialect.name
+    else:
+        bind = op.get_bind()
+        dialect_name = bind.engine.dialect.name if bind is not None else "postgresql"
+
     is_sqlite = dialect_name == "sqlite"
 
     uuid_type = sa.String(length=36) if is_sqlite else postgresql.UUID(as_uuid=True)
@@ -26,6 +31,8 @@ def upgrade() -> None:
             kwargs["server_default"] = sa.text("TIMEZONE('utc', NOW())")
             if name == "updated_at":
                 kwargs["server_onupdate"] = sa.text("TIMEZONE('utc', NOW())")
+        else:
+            kwargs["server_default"] = sa.text("CURRENT_TIMESTAMP")
         return sa.Column(
             name,
             sa.DateTime(timezone=True),
