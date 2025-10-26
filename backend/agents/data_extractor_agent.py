@@ -122,12 +122,18 @@ def _parse_nfe_xml(xml_bytes: bytes) -> Tuple[List[Dict[str, object]], Optional[
     for item in items:
         prod = _find_child(item, 'prod') or ET.Element('prod')
         imposto = _find_child(item, 'imposto') or ET.Element('imposto')
-        icms = list((_find_child(imposto, 'ICMS') or ET.Element('ICMS')).iter())
-        icms_block = icms[0] if icms else ET.Element('ICMS')
-        pis = list((_find_child(imposto, 'PIS') or ET.Element('PIS')).iter())
-        pis_block = pis[0] if pis else ET.Element('PIS')
-        cofins = list((_find_child(imposto, 'COFINS') or ET.Element('COFINS')).iter())
-        cofins_block = cofins[0] if cofins else ET.Element('COFINS')
+        icms_container = _find_child(imposto, 'ICMS') or ET.Element('ICMS')
+        icms_children = list(icms_container)
+        icms_block = icms_children[0] if icms_children else icms_container
+
+        pis_container = _find_child(imposto, 'PIS') or ET.Element('PIS')
+        pis_children = list(pis_container)
+        pis_block = pis_children[0] if pis_children else pis_container
+
+        cofins_container = _find_child(imposto, 'COFINS') or ET.Element('COFINS')
+        cofins_children = list(cofins_container)
+        cofins_block = cofins_children[0] if cofins_children else cofins_container
+
         issqn_block = _find_child(imposto, 'ISSQN') or ET.Element('ISSQN')
 
         entry: Dict[str, object] = {
