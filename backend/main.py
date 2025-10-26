@@ -13,6 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.api.endpoints import router as api_router
 from backend.core.config import settings
 from backend.database import Base, engine
+from backend.graph import create_graph
+from backend.services.repositories import SQLAlchemyStatusRepository
 import backend.database.models  # noqa: F401 - ensure models are registered
 
 logger = logging.getLogger(__name__)
@@ -55,9 +57,16 @@ def _bootstrap_database() -> None:
 
 @app.on_event("startup")
 async def ensure_database_schema() -> None:
-    """Garantir que diretórios e tabelas existam ao subir o serviço."""
+    """Inicializa recursos necessários ao subir o serviço."""
 
-    await asyncio.to_thread(_bootstrap_database)
+    Base.metadata.create_all(bind=engine)
+    graph = create_graph(status_repository=SQLAlchemyStatusRepository())
+    app.state.agent_graph = graph
+
+    # Reutilizar o mesmo grafo na instância global do worker inline
+    from backend.api import endpoints as api_endpoints  # import local para evitar ciclo
+
+    api_endpoints._worker.graph = graph
 
 
 @app.get("/health")
