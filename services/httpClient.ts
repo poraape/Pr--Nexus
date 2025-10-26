@@ -1,7 +1,10 @@
 const resolveBackendBaseUrl = (): string => {
   const envUrl = import.meta.env.VITE_BACKEND_URL;
   if (envUrl && envUrl.trim().length > 0) {
-    return envUrl.replace(/\/$/, "");
+    const normalized = envUrl.trim();
+    if (!/^self$/i.test(normalized) && !/^auto$/i.test(normalized)) {
+      return normalized.replace(/\/$/, "");
+    }
   }
 
   if (typeof window !== "undefined") {
