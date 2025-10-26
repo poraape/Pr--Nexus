@@ -86,7 +86,7 @@ class Settings(BaseSettings):
         validation_alias="GEMINI_API_KEY",
     )
     gemini_model: str = Field(
-        default="gemini-1.5-flash-8b",
+        default="gemini-1.5-flash",
         description="Gemini model identifier.",
         alias="GEMINI_MODEL",
         validation_alias="GEMINI_MODEL",
