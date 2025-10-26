@@ -5,11 +5,16 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from backend.database import Base
+from backend.database import Base, engine
+
+if engine.dialect.name == "sqlite":  # pragma: no cover - exercised via tests
+    JSONField = JSON
+else:  # pragma: no branch - default path in production
+    JSONField = JSONB
 
 
 class Task(Base):
@@ -22,8 +27,8 @@ class Task(Base):
     progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     storage_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    input_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    agent_status: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    input_metadata: Mapped[dict | None] = mapped_column(JSONField, nullable=True)
+    agent_status: Mapped[dict] = mapped_column(JSONField, default=dict, nullable=False)
     error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
@@ -49,7 +54,7 @@ class Report(Base):
     task_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), unique=True, nullable=False
     )
-    content: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    content: Mapped[dict] = mapped_column(JSONField, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )
