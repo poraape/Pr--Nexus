@@ -4,8 +4,8 @@ FROM node:20-bookworm AS frontend-builder
 
 WORKDIR /workspace
 
-ENV NODE_ENV=production \
-    VITE_BACKEND_URL=self
+ENV VITE_BACKEND_URL=self \
+    npm_config_production=false
 
 COPY package*.json ./
 RUN npm ci --legacy-peer-deps --no-audit --no-fund
