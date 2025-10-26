@@ -73,7 +73,7 @@ class Settings(BaseSettings):
         alias="RAG_TOP_K",
         validation_alias="RAG_TOP_K",
     )
-    llm_provider: Literal["gemini", "deepseek"] = Field(
+    llm_provider: Literal["gemini", "deepseek", "hybrid"] = Field(
         default="gemini",
         description="Provider used to answer questions.",
         alias="LLM_PROVIDER",
@@ -109,6 +109,13 @@ class Settings(BaseSettings):
         description="Prompt length threshold to prefer DeepSeek in hybrid mode.",
         alias="DEEPSEEK_CUTOVER_CHARS",
         validation_alias="DEEPSEEK_CUTOVER_CHARS",
+    )
+    max_history_messages: int = Field(
+        default=6,
+        ge=0,
+        description="Maximum number of previous chat messages to include in the RAG prompt.",
+        alias="MAX_HISTORY_MESSAGES",
+        validation_alias="MAX_HISTORY_MESSAGES",
     )
     model_config = SettingsConfigDict(
         env_file=".env",
