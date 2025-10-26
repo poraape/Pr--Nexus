@@ -1,4 +1,4 @@
-﻿FROM python:3.11-slim AS base
+FROM python:3.11-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -6,16 +6,23 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential git curl \
-       tesseract-ocr tesseract-ocr-por poppler-utils \
+    && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
+       build-essential git libpq-dev tesseract-ocr tesseract-ocr-por poppler-utils \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-COPY backend/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
 
-COPY backend ./backend
+RUN pip install --no-cache-dir -r backend/requirements.txt
 
-EXPOSE 8000
+RUN npm install --legacy-peer-deps \
+    && npm run build \
+    && npm cache clean --force \
+    && rm -rf node_modules
 
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+RUN chmod +x start.sh
 
+EXPOSE 7860
+
+CMD ["./start.sh"]

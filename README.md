@@ -9,7 +9,7 @@ Nexus QuantumI2A2 é uma plataforma de auditoria fiscal que combina uma SPA Reac
 - **Pipeline Multiagente no Backend:** Extração, validação, classificação, cross-validation, inteligência e contabilidade residem em módulos Python (`backend/agents/*`) orquestrados por `backend/graph.py`.
 - **API Gateway FastAPI:** Endpoints `/api/v1/upload`, `/status/{task_id}`, `/report/{task_id}`, `/chat`, `/llm/generate-json` centralizam autenticação, filas e entrega de resultados (`backend/api/endpoints.py`).
 - **Assíncrono e Extensível:** Tarefas publicadas em RabbitMQ (modo produção) ou executadas inline via thread pool (modo desenvolvimento). O worker dedicado é inicializado por `python -m backend.worker_main`.
-- **Persistência Completa:** PostgreSQL armazena tasks, status e relatórios (`backend/database/models.py`); ChromaDB mantém embeddings para RAG (`backend/agents/consultant_agent.py`).
+- **Persistência Completa:** SQLite (padrão) ou PostgreSQL gerenciado armazena tasks, status e relatórios (`backend/database/models.py`); ChromaDB mantém embeddings para RAG (`backend/agents/consultant_agent.py`).
 - **Frontend Thin Client:** O React apenas sobe arquivos suportados (XML, CSV, JSON, PDF, OCR e ZIP) e acompanha o progresso via polling/SSE (`hooks/useAgentOrchestrator.ts`, `components/FileUpload.tsx`).
 - **Chat Consultivo com RAG:** Consultor fiscal responde perguntas com contexto indexado no backend.
 
@@ -18,9 +18,9 @@ Nexus QuantumI2A2 é uma plataforma de auditoria fiscal que combina uma SPA Reac
 ## Arquitetura Atual (MAS Server-Side)
 
 ```text
-Frontend (React) ──► API Gateway (FastAPI) ──► RabbitMQ ──► Worker (AgentGraph) ──► PostgreSQL / ChromaDB
+Frontend (React) ──► API Gateway (FastAPI) ──► RabbitMQ ──► Worker (AgentGraph) ──► SQLite (padrão) / ChromaDB
                                               │
-                                              └── Storage de Arquivos
+                                              └── Storage de Arquivos em /data
 ```
 
 - **Frontend (React/Vite)**  
@@ -28,8 +28,8 @@ Frontend (React) ──► API Gateway (FastAPI) ──► RabbitMQ ──► Wo
   - Polling de status (`/api/v1/status/{task_id}`) e busca de relatório final (`/api/v1/report/{task_id}`).  
   - Chat via SSE (`/api/v1/chat`) sem expor chaves de API.  
 
-- **FastAPI Gateway (`backend/main.py`, `backend/api/endpoints.py`)**  
-  - Persiste metadados de tarefas no PostgreSQL.  
+- **FastAPI Gateway (`backend/main.py`, `backend/api/endpoints.py`)**
+  - Persiste metadados de tarefas no SQLite local por padrão (ou em PostgreSQL se configurado).
   - Publica mensagens em RabbitMQ via `RabbitMQPublisher` ou executa inline com `InlineTaskPublisher`.  
   - Posta atualizações em `SQLAlchemyStatusRepository` e salva relatórios em `SQLAlchemyReportRepository`.
 
@@ -57,15 +57,18 @@ pip install -r backend/requirements.txt
 Defina as variáveis de ambiente (arquivo `.env` na raiz ou export direto):
 
 ```env
-POSTGRES_DSN=postgresql+psycopg://postgres:postgres@localhost:5432/nexus
-STORAGE_PATH=backend/storage/uploads
-CHROMA_PERSIST_DIRECTORY=backend/.chroma
+POSTGRES_DSN=sqlite+aiosqlite:///data/nexus.db
+STORAGE_PATH=/data/uploads
+CHROMA_PERSIST_DIRECTORY=/data/chroma
+SPACE_RUNTIME_DIR=/data                     # raiz única para dados persistentes
 TASK_DISPATCH_MODE=inline              # use "rabbitmq" para produção
 RABBITMQ_URL=amqp://guest:guest@localhost:5672/
 RABBITMQ_QUEUE=audit_tasks
 GEMINI_API_KEY=***
 FRONTEND_ORIGIN=http://localhost:5173
 ```
+
+Com `SPACE_RUNTIME_DIR=/data` definido (padrão no `docker-compose.yml`), uploads e embeddings são criados em subpastas de `/data`, permitindo que um único volume nomeado sobreviva a reinicializações.
 
 Inicie a API:
 
@@ -95,7 +98,7 @@ A aplicação estará em `http://localhost:5173`.
 
 ## Execução com Docker Compose
 
-Um ambiente completo (PostgreSQL, RabbitMQ, FastAPI, Worker e Vite) está definido em `docker-compose.yml`.
+Um ambiente completo (RabbitMQ, FastAPI, Worker e Vite) está definido em `docker-compose.yml`.
 
 ```bash
 # Exporte a chave do LLM antes de subir, se necessário
@@ -108,9 +111,8 @@ Serviços expostos:
 - FastAPI: `http://localhost:8000`
 - Frontend: `http://localhost:5173`
 - RabbitMQ Management: `http://localhost:15672` (guest/guest)
-- PostgreSQL: `localhost:5432`
 
-Volumes nomeados preservam uploads, embeddings e dados do banco (`backend_storage`, `backend_chroma`, `postgres_data`, `rabbitmq_data`).
+Volumes nomeados preservam uploads, embeddings e dados do broker (`backend_data`, `rabbitmq_data`).
 
 ---
 
@@ -143,16 +145,21 @@ Os antigos agentes TypeScript client-side foram removidos (agora toda a lógica 
 
 ## Variáveis de Ambiente Importantes
 
-| Variável | Descrição |
-| --- | --- |
-| `POSTGRES_DSN` | DSN usado pelo SQLAlchemy para persistir tarefas e relatórios. |
-| `TASK_DISPATCH_MODE` | `inline` (padrão) ou `rabbitmq`. Controla como as tasks são enfileiradas. |
-| `RABBITMQ_URL` / `RABBITMQ_QUEUE` | Configuração do broker quando `TASK_DISPATCH_MODE=rabbitmq`. |
-| `STORAGE_PATH` | Diretório para uploads persistidos antes do processamento. |
-| `CHROMA_PERSIST_DIRECTORY` | Pasta usada pelo ChromaDB para embeddings. |
-| `GEMINI_API_KEY` / `DEEPSEEK_API_KEY` | Chaves dos provedores de LLM. Nunca expostas ao frontend. |
-| `FRONTEND_ORIGIN` | Origin autorizado para CORS. |
-| `VITE_BACKEND_URL` (frontend) | URL do gateway FastAPI consumida pelo SPA. |
+> **Obrigatório vs. opcional** – As variáveis marcadas como "Sim" precisam estar definidas em produção. Quando houver alternativas,
+> configure pelo menos uma das opções indicadas.
+
+| Variável | Obrigatória? | Descrição |
+| --- | --- | --- |
+| `POSTGRES_DSN` | Sim | DSN usado pelo SQLAlchemy para persistir tarefas e relatórios. |
+| `STORAGE_PATH` | Sim | Diretório para uploads persistidos antes do processamento. |
+| `CHROMA_PERSIST_DIRECTORY` | Sim | Pasta usada pelo ChromaDB para embeddings. |
+| `TASK_DISPATCH_MODE` | Sim | Define o modo de execução das tarefas. O padrão é `inline`, adequado para produção quando RabbitMQ não está disponível. |
+| `RABBITMQ_URL` / `RABBITMQ_QUEUE` | Condicional | Necessárias apenas quando `TASK_DISPATCH_MODE=rabbitmq`. |
+| `LLM_PROVIDER` | Sim | Escolha do provedor (`gemini`, `deepseek` ou `hybrid`). |
+| `GEMINI_API_KEY` | Condicional | Obrigatória quando `LLM_PROVIDER=gemini` ou `hybrid`. |
+| `DEEPSEEK_API_KEY` | Condicional | Obrigatória quando `LLM_PROVIDER=deepseek` ou `hybrid`. |
+| `FRONTEND_ORIGIN` | Sim | Origin autorizado para CORS. |
+| `VITE_BACKEND_URL` (frontend) | Sim | URL do gateway FastAPI consumida pelo SPA. |
 
 ---
 
@@ -213,6 +220,18 @@ Para builds manuais (ex.: hotfix), abra a aba *Actions* no GitHub e dispare `CI 
 - O push aciona novamente o workflow, publicando a versão anterior na Space.
 
 Se a Space precisar ser reimplantada sem alterações de código, execute o workflow manualmente ou utilize `huggingface-cli repo push` com o commit conhecido.
+
+---
+
+## Migração futura para PostgreSQL gerenciado
+
+Para escalar além do SQLite embarcado, siga os passos abaixo para usar um banco PostgreSQL gerenciado (Neon, RDS, Cloud SQL, etc.):
+
+1. **Provisionar o banco:** crie uma instância PostgreSQL e obtenha a URL completa (incluindo usuário, senha, host, porta e banco).
+2. **Atualizar variáveis de ambiente:** defina `POSTGRES_DSN` com o DSN do provedor e remova `SPACE_RUNTIME_DIR`, `STORAGE_PATH` e `CHROMA_PERSIST_DIRECTORY` se for usar armazenamento externo diferente do `/data`.
+3. **Executar migrações:** rode `alembic upgrade head` ou reinicie o backend; o `backend/main.py` aplica as migrações automaticamente na inicialização.
+4. **Ajustar Docker Compose (opcional):** adicione um serviço externo ou utilize variáveis apontando para o endpoint gerenciado. Remova o volume `backend_data` se os uploads e embeddings também forem migrados para outro storage.
+5. **Verificar permissões:** garanta que o usuário tenha privilégios de criação de tabelas e índices necessários para `Base.metadata.create_all` e migrações Alembic.
 
 ---
 
