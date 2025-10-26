@@ -19,4 +19,79 @@ class LLMClientError(RuntimeError):
     """Raised when the LLM client cannot complete an operation."""
 
 
-class LLMClient:\n    """Hybrid client: prefers Gemini free model; uses DeepSeek for heavy/offline tasks."""\n\n    def __init__(self, settings: Settings) -> None:\n        self._settings = settings\n        self._provider = settings.llm_provider.lower()\n        self._gemini = None\n        self._deepseek = None\n\n        if settings.gemini_api_key and genai is not None:\n            genai.configure(api_key=settings.gemini_api_key)\n            self._gemini = genai.GenerativeModel(settings.gemini_model)\n        if settings.deepseek_api_key and OpenAI is not None:\n            self._deepseek = OpenAI(api_key=settings.deepseek_api_key, base_url="https://api.deepseek.com")\n\n        if self._provider == "gemini" and not self._gemini:\n            raise LLMClientError("GEMINI_API_KEY is required when LLM_PROVIDER=gemini.")\n        if self._provider == "deepseek" and not self._deepseek:\n            raise LLMClientError("DEEPSEEK_API_KEY is required when LLM_PROVIDER=deepseek.")\n        if self._provider == "hybrid" and not (self._gemini or self._deepseek):\n            raise LLMClientError("At least one provider must be configured for hybrid mode.")\n\n    def _choose_provider(self, prompt: str, *, response_schema: Optional[Dict]) -> str:\n        if response_schema and self._gemini is not None:\n            return "gemini"\n        if self._provider == "hybrid" and self._deepseek is not None:\n            if len(prompt) >= getattr(self._settings, "deepseek_cutover_chars", 4000):\n                return "deepseek"\n        if self._provider == "deepseek" and self._deepseek is not None:\n            return "deepseek"\n        if self._gemini is not None:\n            return "gemini"\n        if self._deepseek is not None:\n            return "deepseek"\n        raise LLMClientError("No LLM provider available.")\n\n    def generate(self, prompt: str, *, response_mime: str = "text/plain", response_schema: Optional[Dict] = None, model: Optional[str] = None) -> str:\n        provider = self._choose_provider(prompt, response_schema=response_schema)\n        if provider == "gemini":\n            generation_config = {"response_mime_type": response_mime}\n            if response_schema:\n                generation_config["response_schema"] = response_schema\n            result = self._gemini.generate_content(prompt, generation_config=generation_config)\n            return getattr(result, "text", "")\n        messages = [\n            {"role": "system", "content": ("Responda em JSON valido." if response_mime == "application/json" else "Responda em Portugues.")},\n            {"role": "user", "content": prompt},\n        ]\n        completion = self._deepseek.chat.completions.create(model=model or self._settings.deepseek_model, messages=messages, stream=False)\n        return completion.choices[0].message.content or ""\n\n    def stream(self, prompt: str, *, response_mime: str = "text/plain", response_schema: Optional[Dict] = None, model: Optional[str] = None) -> Iterable[str]:\n        provider = self._choose_provider(prompt, response_schema=response_schema)\n        if provider == "gemini":\n            generation_config = {"response_mime_type": response_mime}\n            if response_schema:\n                generation_config["response_schema"] = response_schema\n            stream = self._gemini.generate_content(prompt, generation_config=generation_config, stream=True)\n            for chunk in stream:\n                text = getattr(chunk, "text", "")\n                if text:\n                    yield text\n            return\n        messages = [\n            {"role": "system", "content": ("Responda em JSON valido." if response_mime == "application/json" else "Responda em Portugues.")},\n            {"role": "user", "content": prompt},\n        ]\n        stream = self._deepseek.chat.completions.create(model=model or self._settings.deepseek_model, messages=messages, stream=True)\n        for event in stream:\n            chunk = event.choices[0].delta.content or ""\n            if chunk:\n                yield chunk\n\n    @property\n    def settings(self) -> Settings:\n        return self._settings
+class LLMClient:
+    """Hybrid client: prefers Gemini free model; uses DeepSeek for heavy/offline tasks."""
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self._provider = settings.llm_provider.lower()
+        self._gemini = None
+        self._deepseek = None
+
+        if settings.gemini_api_key and genai is not None:
+            genai.configure(api_key=settings.gemini_api_key)
+            self._gemini = genai.GenerativeModel(settings.gemini_model)
+        if settings.deepseek_api_key and OpenAI is not None:
+            self._deepseek = OpenAI(api_key=settings.deepseek_api_key, base_url="https://api.deepseek.com")
+
+        if self._provider == "gemini" and not self._gemini:
+            raise LLMClientError("GEMINI_API_KEY is required when LLM_PROVIDER=gemini.")
+        if self._provider == "deepseek" and not self._deepseek:
+            raise LLMClientError("DEEPSEEK_API_KEY is required when LLM_PROVIDER=deepseek.")
+        if self._provider == "hybrid" and not (self._gemini or self._deepseek):
+            raise LLMClientError("At least one provider must be configured for hybrid mode.")
+
+    def _choose_provider(self, prompt: str, *, response_schema: Optional[Dict]) -> str:
+        if response_schema and self._gemini is not None:
+            return "gemini"
+        if self._provider == "hybrid" and self._deepseek is not None:
+            if len(prompt) >= getattr(self._settings, "deepseek_cutover_chars", 4000):
+                return "deepseek"
+        if self._provider == "deepseek" and self._deepseek is not None:
+            return "deepseek"
+        if self._gemini is not None:
+            return "gemini"
+        if self._deepseek is not None:
+            return "deepseek"
+        raise LLMClientError("No LLM provider available.")
+
+    def generate(self, prompt: str, *, response_mime: str = "text/plain", response_schema: Optional[Dict] = None, model: Optional[str] = None) -> str:
+        provider = self._choose_provider(prompt, response_schema=response_schema)
+        if provider == "gemini":
+            generation_config = {"response_mime_type": response_mime}
+            if response_schema:
+                generation_config["response_schema"] = response_schema
+            result = self._gemini.generate_content(prompt, generation_config=generation_config)
+            return getattr(result, "text", "")
+        messages = [
+            {"role": "system", "content": ("Responda em JSON valido." if response_mime == "application/json" else "Responda em Portugues.")},
+            {"role": "user", "content": prompt},
+        ]
+        completion = self._deepseek.chat.completions.create(model=model or self._settings.deepseek_model, messages=messages, stream=False)
+        return completion.choices[0].message.content or ""
+
+    def stream(self, prompt: str, *, response_mime: str = "text/plain", response_schema: Optional[Dict] = None, model: Optional[str] = None) -> Iterable[str]:
+        provider = self._choose_provider(prompt, response_schema=response_schema)
+        if provider == "gemini":
+            generation_config = {"response_mime_type": response_mime}
+            if response_schema:
+                generation_config["response_schema"] = response_schema
+            stream = self._gemini.generate_content(prompt, generation_config=generation_config, stream=True)
+            for chunk in stream:
+                text = getattr(chunk, "text", "")
+                if text:
+                    yield text
+            return
+        messages = [
+            {"role": "system", "content": ("Responda em JSON valido." if response_mime == "application/json" else "Responda em Portugues.")},
+            {"role": "user", "content": prompt},
+        ]
+        stream = self._deepseek.chat.completions.create(model=model or self._settings.deepseek_model, messages=messages, stream=True)
+        for event in stream:
+            chunk = event.choices[0].delta.content or ""
+            if chunk:
+                yield chunk
+
+    @property
+    def settings(self) -> Settings:
+        return self._settings
