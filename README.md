@@ -143,16 +143,21 @@ Os antigos agentes TypeScript client-side foram removidos (agora toda a lógica 
 
 ## Variáveis de Ambiente Importantes
 
-| Variável | Descrição |
-| --- | --- |
-| `POSTGRES_DSN` | DSN usado pelo SQLAlchemy para persistir tarefas e relatórios. |
-| `TASK_DISPATCH_MODE` | `inline` (padrão) ou `rabbitmq`. Controla como as tasks são enfileiradas. |
-| `RABBITMQ_URL` / `RABBITMQ_QUEUE` | Configuração do broker quando `TASK_DISPATCH_MODE=rabbitmq`. |
-| `STORAGE_PATH` | Diretório para uploads persistidos antes do processamento. |
-| `CHROMA_PERSIST_DIRECTORY` | Pasta usada pelo ChromaDB para embeddings. |
-| `GEMINI_API_KEY` / `DEEPSEEK_API_KEY` | Chaves dos provedores de LLM. Nunca expostas ao frontend. |
-| `FRONTEND_ORIGIN` | Origin autorizado para CORS. |
-| `VITE_BACKEND_URL` (frontend) | URL do gateway FastAPI consumida pelo SPA. |
+> **Obrigatório vs. opcional** – As variáveis marcadas como "Sim" precisam estar definidas em produção. Quando houver alternativas,
+> configure pelo menos uma das opções indicadas.
+
+| Variável | Obrigatória? | Descrição |
+| --- | --- | --- |
+| `POSTGRES_DSN` | Sim | DSN usado pelo SQLAlchemy para persistir tarefas e relatórios. |
+| `STORAGE_PATH` | Sim | Diretório para uploads persistidos antes do processamento. |
+| `CHROMA_PERSIST_DIRECTORY` | Sim | Pasta usada pelo ChromaDB para embeddings. |
+| `TASK_DISPATCH_MODE` | Sim | Define o modo de execução das tarefas. O padrão é `inline`, adequado para produção quando RabbitMQ não está disponível. |
+| `RABBITMQ_URL` / `RABBITMQ_QUEUE` | Condicional | Necessárias apenas quando `TASK_DISPATCH_MODE=rabbitmq`. |
+| `LLM_PROVIDER` | Sim | Escolha do provedor (`gemini`, `deepseek` ou `hybrid`). |
+| `GEMINI_API_KEY` | Condicional | Obrigatória quando `LLM_PROVIDER=gemini` ou `hybrid`. |
+| `DEEPSEEK_API_KEY` | Condicional | Obrigatória quando `LLM_PROVIDER=deepseek` ou `hybrid`. |
+| `FRONTEND_ORIGIN` | Sim | Origin autorizado para CORS. |
+| `VITE_BACKEND_URL` (frontend) | Sim | URL do gateway FastAPI consumida pelo SPA. |
 
 ---
 
