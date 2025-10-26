@@ -52,7 +52,10 @@ def _mask_cnpj(value: Optional[str]) -> Optional[str]:
 def _find_child(element: Optional[ET.Element], tag: str) -> Optional[ET.Element]:
     if element is None:
         return None
-    return element.find(f"./{{*}}{tag}") or element.find(tag)
+    child = element.find(f"./{{*}}{tag}")
+    if child is not None:
+        return child
+    return element.find(tag)
 
 
 def _find_children(element: Optional[ET.Element], tag: str) -> List[ET.Element]:
