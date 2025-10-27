@@ -20,13 +20,13 @@ if (!env.FRONTEND_ORIGIN || env.FRONTEND_ORIGIN.trim() === '') {
 
 const viteBinary = path.join(projectRoot, 'node_modules', '.bin', 'vite');
 const isWindows = process.platform === 'win32';
-const executable = isWindows ? `${viteBinary}.cmd` : viteBinary;
+const executable = isWindows ? `"${viteBinary}.cmd"` : viteBinary;
 
 const child = spawn(executable, ['build'], {
   cwd: projectRoot,
   env,
   stdio: 'inherit',
-  shell: false,
+  shell: true,
 });
 
 child.on('exit', (code, signal) => {
