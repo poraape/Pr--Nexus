@@ -29,6 +29,7 @@ router = APIRouter(prefix="/api/v1")
 _settings = get_settings()
 _consultant_disabled = os.getenv("DISABLE_CONSULTANT_AGENT") == "1"
 
+_agent: Optional[ConsultantAgent]
 if not _consultant_disabled:
     try:
         _llm_client = LLMClient(_settings)
@@ -36,10 +37,15 @@ if not _consultant_disabled:
         logger.exception("Failed to initialize LLM client")
         raise
 
-    _agent: Optional[ConsultantAgent] = ConsultantAgent(_settings, llm_client=_llm_client)
+    _agent = ConsultantAgent(_settings, llm_client=_llm_client)
 else:  # pragma: no cover - only used in constrained test environments
     _llm_client = None
-    _agent = None
+    try:
+        # Tests may provide a lightweight stub agent even when the consultant is disabled.
+        _agent = ConsultantAgent(_settings)  # type: ignore[call-arg]
+        logger.info("Consultant agent instantiated in disabled mode (likely using test stub).")
+    except Exception:  # pragma: no cover - defensive fallback
+        _agent = None
 _storage = FileStorage(_settings.storage_path)
 _status_repository = SQLAlchemyStatusRepository()
 _report_repository = SQLAlchemyReportRepository()
