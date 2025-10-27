@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+logging.basicConfig(level=logging.INFO)
 from pathlib import Path
 
 from alembic import command
@@ -85,6 +86,7 @@ def _bootstrap_database() -> None:
 async def ensure_database_schema() -> None:
     """Inicializa recursos necessários ao subir o serviço."""
 
+    ensure_runtime_directories()
     Base.metadata.create_all(bind=engine)
     graph = create_graph(status_repository=SQLAlchemyStatusRepository())
     app.state.agent_graph = graph
