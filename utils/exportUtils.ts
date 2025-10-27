@@ -10,7 +10,18 @@ import type {
 
 type HtmlExportTarget = HTMLElement;
 
+const EXPORT_LOG_PREFIX = '[ExportUtils]';
+
+const logExport = (stage: string, details?: Record<string, unknown>) => {
+    if (details) {
+        console.info(`${EXPORT_LOG_PREFIX} ${stage}`, details);
+    } else {
+        console.info(`${EXPORT_LOG_PREFIX} ${stage}`);
+    }
+};
+
 const saveAs = (blob: Blob, filename: string) => {
+    logExport('Preparando arquivo para download', { filename, size: blob.size });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
@@ -29,11 +40,7 @@ const cleanText = (value: string | undefined | null): string => (value ?? '').tr
 const stripInvisible = (value: string): string =>
     value.replace(/\s+/g, ' ').trim();
 
-const SELECTORS_TO_REMOVE = [
-    '.bg-gray-800.p-6.rounded-lg.shadow-lg',
-    '.bg-gray-800.p-6.rounded-lg.shadow-lg.animate-fade-in',
-    '[data-export-ignore="true"]',
-];
+const SELECTORS_TO_REMOVE = ['[data-export-ignore="true"]'];
 
 const shouldSkipSection = (element: HTMLElement): boolean => {
     if (element.getAttribute('data-export-title') === '') {
@@ -148,13 +155,16 @@ const packInsights = (insights: AIDrivenInsight[] | undefined) =>
     }));
 
 export const exportToJson = async (report: AuditReport, filename: string) => {
+    logExport('Iniciando exportação JSON', { filename });
     const blob = new Blob([JSON.stringify(report, null, 2)], {
         type: 'application/json;charset=utf-8',
     });
     saveAs(blob, `${filename}.json`);
+    logExport('Exportação JSON concluída', { filename });
 };
 
 export const exportToXlsx = async (report: AuditReport, filename: string) => {
+    logExport('Iniciando exportação XLSX', { filename });
     const { utils, writeFile } = await import('xlsx');
     const workbook = utils.book_new();
 
@@ -229,9 +239,11 @@ export const exportToXlsx = async (report: AuditReport, filename: string) => {
     }
 
     writeFile(workbook, `${filename}.xlsx`);
+    logExport('Exportação XLSX concluída', { filename });
 };
 
 export const exportToMarkdown = async (element: HtmlExportTarget, filename: string) => {
+    logExport('Iniciando exportação Markdown', { filename });
     const lines: string[] = [];
     element.querySelectorAll('h1, h2, h3, h4, p, li').forEach(node => {
         const el = node as HTMLElement;
@@ -271,6 +283,7 @@ export const exportToMarkdown = async (element: HtmlExportTarget, filename: stri
 
     const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' });
     saveAs(blob, `${filename}.md`);
+    logExport('Exportação Markdown concluída', { filename });
 };
 
 export const exportToHtml = async (
@@ -278,8 +291,14 @@ export const exportToHtml = async (
     filename: string,
     title: string,
 ) => {
+    logExport('Iniciando exportação HTML', { filename, title });
     const clone = element.cloneNode(true) as HTMLElement;
-    SELECTORS_TO_REMOVE.forEach(selector => clone.querySelector(selector)?.remove());
+    clone.removeAttribute('style');
+    clone.removeAttribute('aria-hidden');
+    clone.removeAttribute('data-export-root');
+    SELECTORS_TO_REMOVE.forEach(selector => {
+        clone.querySelectorAll(selector).forEach(el => el.remove());
+    });
     const chartImages = await getChartImages(element);
     const originalCharts = Array.from(element.querySelectorAll('[data-chart-container="true"]'));
     const clonedCharts = clone.querySelectorAll('[data-chart-container="true"]');
@@ -295,6 +314,8 @@ export const exportToHtml = async (
             chart.replaceWith(img);
         }
     });
+
+    const htmlContent = clone.innerHTML;
 
     const html = `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -314,12 +335,13 @@ export const exportToHtml = async (
     </head>
     <body>
         <h1>${escapeAttribute(title)}</h1>
-        ${clone.innerHTML}
+        ${htmlContent}
     </body>
 </html>`;
 
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     saveAs(blob, `${filename}.html`);
+    logExport('Exportação HTML concluída', { filename });
 };
 
 const ensurePdfFonts = async (pdfMake: any) => {
@@ -339,6 +361,7 @@ export const exportToPdf = async (
     filename: string,
     title: string,
 ) => {
+    logExport('Iniciando exportação PDF', { filename, title });
     const pdfMakeModule = await import('pdfmake/build/pdfmake');
     const pdfMake: any = pdfMakeModule.default || pdfMakeModule;
     await ensurePdfFonts(pdfMake);
@@ -434,6 +457,7 @@ export const exportToPdf = async (
     };
 
     pdfMake.createPdf(definition).download(`${filename}.pdf`);
+    logExport('Exportação PDF concluída', { filename });
 };
 
 export const exportToDocx = async (
@@ -441,6 +465,7 @@ export const exportToDocx = async (
     filename: string,
     title: string,
 ) => {
+    logExport('Iniciando exportação DOCX', { filename, title });
     const docx = await import('docx');
     const {
         AlignmentType,
@@ -563,4 +588,5 @@ export const exportToDocx = async (
 
     const blob = await Packer.toBlob(doc);
     saveAs(blob, `${filename}.docx`);
+    logExport('Exportação DOCX concluída', { filename });
 };
