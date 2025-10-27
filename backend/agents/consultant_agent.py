@@ -26,23 +26,16 @@ class ConsultantAgentError(RuntimeError):
     """Raised when the consultant agent cannot complete an operation."""
 
 
-class _FallbackEmbeddingFunction:
+class _FallbackEmbeddingFunction(EmbeddingFunction):
     """Deterministic embedding function used when sentence-transformers is unavailable."""
 
     def __init__(self, dimension: int = 384) -> None:
         self._dimension = dimension
 
     def __call__(self, input: Documents) -> List[List[float]]:  # type: ignore[override]
-        return self.embed_documents(input)
-
-    def embed_documents(self, documents: Documents) -> List[List[float]]:
-        return [[0.0] * self._dimension for _ in documents]
-
-    def embed_query(self, input: str) -> List[float]:
-        return [0.0] * self._dimension
-
-    def name(self) -> str:
-        return "fallback"
+        logger.info(f"Fallback embedding for {len(input)} documents.")
+        embeddings = [[0.0] * self._dimension for _ in input]
+        return embeddings
 
 
 class ConsultantAgent:

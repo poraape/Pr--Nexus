@@ -75,7 +75,9 @@ def _find_path(element: Optional[ET.Element], path: str) -> Optional[ET.Element]
 
 
 def _find_text(element: Optional[ET.Element], tag: str) -> Optional[str]:
-    return _xml_text(_find_child(element, tag))
+    text = _xml_text(_find_child(element, tag))
+    logger.info(f"Finding tag '{tag}': found text '{text}'")
+    return text
 
 
 def _find_path_text(element: Optional[ET.Element], path: str) -> Optional[str]:
@@ -83,6 +85,7 @@ def _find_path_text(element: Optional[ET.Element], path: str) -> Optional[str]:
 
 
 def _parse_nfe_xml(xml_bytes: bytes) -> Tuple[List[Dict[str, object]], Optional[str]]:
+    logger.info("Starting to parse NFe XML.")
     try:
         tree = ET.fromstring(xml_bytes)
     except ET.ParseError as exc:  # pragma: no cover - defensive branch
@@ -166,12 +169,65 @@ def _parse_nfe_xml(xml_bytes: bytes) -> Tuple[List[Dict[str, object]], Optional[
     return result, None
 def _parse_csv(path: Path) -> Tuple[List[Dict[str, object]], Optional[str]]:
     data: List[Dict[str, object]] = []
-    with path.open("r", encoding="utf-8") as fh:
-        reader = csv.DictReader(fh)
-        for row in reader:
-            data.append({k.strip(): v for k, v in row.items()})
-    if not data:
+    try:
+        with path.open("r", encoding="utf-8", newline='') as fh:
+            # Handle potential BOM
+            if fh.read(1) != '\ufeff':
+                fh.seek(0)
+            reader = csv.DictReader(fh)
+            rows = list(reader)
+    except UnicodeDecodeError:
+        with path.open("r", encoding="latin-1", newline='') as fh:
+            if fh.read(1) != '\ufeff':
+                fh.seek(0)
+            reader = csv.DictReader(fh)
+            rows = list(reader)
+
+    if not rows:
         return [], "Nenhuma linha encontrada no CSV."
+
+    # Pre-calculate total value for each NFe
+    nfe_totals = {}
+    for row in rows:
+        chave = row.get("CHAVE DE ACESSO")
+        if not chave:
+            continue
+        valor_item = parse_safe_float(row.get("VALOR TOTAL"))
+        nfe_totals[chave] = nfe_totals.get(chave, 0.0) + valor_item
+
+    for row in rows:
+        total_nfe = nfe_totals.get(row.get("CHAVE DE ACESSO"), 0.0)
+        
+        entry: Dict[str, object] = {
+            'nfe_id': row.get("CHAVE DE ACESSO"),
+            'data_emissao': row.get("DATA EMISSÃO"),
+            'valor_total_nfe': total_nfe,
+            'emitente_nome': row.get("RAZÃO SOCIAL EMITENTE"),
+            'emitente_cnpj': _mask_cnpj(row.get("CPF/CNPJ Emitente")),
+            'emitente_uf': row.get("UF EMITENTE"),
+            'destinatario_nome': row.get("NOME DESTINATÁRIO"),
+            'destinatario_cnpj': _mask_cnpj(row.get("CNPJ DESTINATÁRIO")),
+            'destinatario_uf': row.get("UF DESTINATÁRIO"),
+            'produto_nome': row.get("DESCRIÇÃO DO PRODUTO/SERVIÇO"),
+            'produto_ncm': row.get("CÓDIGO NCM/SH"),
+            'produto_cfop': row.get("CFOP"),
+            'produto_qtd': parse_safe_float(row.get("QUANTIDADE")),
+            'produto_valor_unit': parse_safe_float(row.get("VALOR UNITÁRIO")),
+            'produto_valor_total': parse_safe_float(row.get("VALOR TOTAL")),
+            
+            # Set missing tax fields to zero
+            'produto_cst_icms': None,
+            'produto_base_calculo_icms': 0.0,
+            'produto_aliquota_icms': 0.0,
+            'produto_valor_icms': 0.0,
+            'produto_cst_pis': None,
+            'produto_valor_pis': 0.0,
+            'produto_cst_cofins': None,
+            'produto_valor_cofins': 0.0,
+            'produto_valor_iss': 0.0,
+        }
+        data.append(entry)
+        
     return data, None
 
 
@@ -391,6 +447,7 @@ def _handle_zip(path: Path, progress_callback: Optional[ProgressCallback]) -> Li
             with archive.open(info, "r") as file_handle:
                 filename = _sanitize_filename(info.filename)
                 ext = filename.lower().split(".")[-1]
+                logger.info(f"Handling file in zip: {filename}, extension: {ext}")
                 data_bytes = file_handle.read()
                 text = None
                 meta_extra: Dict[str, object] = {}
