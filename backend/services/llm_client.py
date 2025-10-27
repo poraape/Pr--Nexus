@@ -42,10 +42,11 @@ class LLMClient:
             genai.configure(api_key=settings.gemini_api_key)
             candidates = [
                 settings.gemini_model,
-                "gemini-2.5-flash
                 "gemini-1.5-flash",
+                "gemini-1.5-flash-001",
                 "gemini-1.5-flash-latest",
                 "gemini-1.5-pro",
+                "gemini-pro",
             ]
             seen: list[str] = []
             for candidate in candidates:
@@ -99,7 +100,7 @@ class LLMClient:
                 self._gemini_index = index
                 return True
 
-        logger.error("Nenhum modelo Gemini alternativo dispon\u00edvel: %s", exc)
+        logger.error("No alternate Gemini model available: %s", exc)
         self._gemini = None
         return False
 
@@ -146,10 +147,10 @@ class LLMClient:
                 if attempts > 3:
                     break
         if provider == "gemini":
-            raise LLMClientError("Nenhum modelo Gemini disponível para completar a requisição.")
+            raise LLMClientError("No Gemini model available to fulfil the request.")
 
         if self._deepseek is None:
-            raise LLMClientError("DeepSeek não está configurado.")
+            raise LLMClientError("DeepSeek is not configured.")
 
         messages = [
             {"role": "system", "content": ("Responda em JSON valido." if response_mime == "application/json" else "Responda em Portugues.")},
@@ -190,10 +191,10 @@ class LLMClient:
                     raise LLMClientError(str(exc)) from exc
             # se chegamos aqui e provider ainda e gemini mas sem fallback, cair para deepseek stub
         if provider == "gemini":
-            raise LLMClientError("Nenhum modelo Gemini disponível para streaming.")
+            raise LLMClientError("No Gemini model available for streaming.")
 
         if self._deepseek is None:
-            raise LLMClientError("DeepSeek não está configurado.")
+            raise LLMClientError("DeepSeek is not configured.")
 
         messages = [
             {"role": "system", "content": ("Responda em JSON valido." if response_mime == "application/json" else "Responda em Portugues.")},
