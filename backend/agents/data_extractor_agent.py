@@ -11,7 +11,7 @@ from zipfile import ZipFile
 from xml.etree import ElementTree as ET
 
 from backend.types import ImportedDoc
-from backend.utils.parsing import parse_safe_float
+from backend.utils.parsing import create_column_mapping, parse_safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -176,44 +176,57 @@ def _parse_csv(path: Path) -> Tuple[List[Dict[str, object]], Optional[str]]:
                 fh.seek(0)
             reader = csv.DictReader(fh)
             rows = list(reader)
+            headers = reader.fieldnames
     except UnicodeDecodeError:
         with path.open("r", encoding="latin-1", newline='') as fh:
             if fh.read(1) != '\ufeff':
                 fh.seek(0)
             reader = csv.DictReader(fh)
             rows = list(reader)
+            headers = reader.fieldnames
 
     if not rows:
         return [], "Nenhuma linha encontrada no CSV."
 
+    if not headers:
+        return [], "Nenhum cabeçalho encontrado no CSV."
+
+    column_mapping = create_column_mapping(headers)
+
     # Pre-calculate total value for each NFe
     nfe_totals = {}
-    for row in rows:
-        chave = row.get("CHAVE DE ACESSO")
-        if not chave:
-            continue
-        valor_item = parse_safe_float(row.get("VALOR TOTAL"))
-        nfe_totals[chave] = nfe_totals.get(chave, 0.0) + valor_item
+    nfe_id_col = column_mapping.get('nfe_id')
+    valor_total_col = column_mapping.get('produto_valor_total')
+
+    if nfe_id_col and valor_total_col:
+        for row in rows:
+            chave = row.get(nfe_id_col)
+            if not chave:
+                continue
+            valor_item = parse_safe_float(row.get(valor_total_col))
+            nfe_totals[chave] = nfe_totals.get(chave, 0.0) + valor_item
 
     for row in rows:
-        total_nfe = nfe_totals.get(row.get("CHAVE DE ACESSO"), 0.0)
+        total_nfe = 0.0
+        if nfe_id_col:
+            total_nfe = nfe_totals.get(row.get(nfe_id_col), 0.0)
         
         entry: Dict[str, object] = {
-            'nfe_id': row.get("CHAVE DE ACESSO"),
-            'data_emissao': row.get("DATA EMISSÃO"),
+            'nfe_id': row.get(column_mapping.get('nfe_id')),
+            'data_emissao': row.get(column_mapping.get('data_emissao')),
             'valor_total_nfe': total_nfe,
-            'emitente_nome': row.get("RAZÃO SOCIAL EMITENTE"),
-            'emitente_cnpj': _mask_cnpj(row.get("CPF/CNPJ Emitente")),
-            'emitente_uf': row.get("UF EMITENTE"),
-            'destinatario_nome': row.get("NOME DESTINATÁRIO"),
-            'destinatario_cnpj': _mask_cnpj(row.get("CNPJ DESTINATÁRIO")),
-            'destinatario_uf': row.get("UF DESTINATÁRIO"),
-            'produto_nome': row.get("DESCRIÇÃO DO PRODUTO/SERVIÇO"),
-            'produto_ncm': row.get("CÓDIGO NCM/SH"),
-            'produto_cfop': row.get("CFOP"),
-            'produto_qtd': parse_safe_float(row.get("QUANTIDADE")),
-            'produto_valor_unit': parse_safe_float(row.get("VALOR UNITÁRIO")),
-            'produto_valor_total': parse_safe_float(row.get("VALOR TOTAL")),
+            'emitente_nome': row.get(column_mapping.get('emitente_nome')),
+            'emitente_cnpj': _mask_cnpj(row.get(column_mapping.get('emitente_cnpj'))),
+            'emitente_uf': row.get(column_mapping.get('emitente_uf')),
+            'destinatario_nome': row.get(column_mapping.get('destinatario_nome')),
+            'destinatario_cnpj': _mask_cnpj(row.get(column_mapping.get('destinatario_cnpj'))),
+            'destinatario_uf': row.get(column_mapping.get('destinatario_uf')),
+            'produto_nome': row.get(column_mapping.get('produto_nome')),
+            'produto_ncm': row.get(column_mapping.get('produto_ncm')),
+            'produto_cfop': row.get(column_mapping.get('produto_cfop')),
+            'produto_qtd': parse_safe_float(row.get(column_mapping.get('produto_qtd'))),
+            'produto_valor_unit': parse_safe_float(row.get(column_mapping.get('produto_valor_unit'))),
+            'produto_valor_total': parse_safe_float(row.get(column_mapping.get('produto_valor_total'))),
             
             # Set missing tax fields to zero
             'produto_cst_icms': None,
