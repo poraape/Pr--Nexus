@@ -43,7 +43,6 @@ class LLMClient:
             candidates = [
                 settings.gemini_model,
                 "gemini-1.5-flash",
-                "gemini-1.5-flash-001",
                 "gemini-1.5-flash-latest",
                 "gemini-1.5-pro",
                 "gemini-pro",
