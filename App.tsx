@@ -12,6 +12,7 @@ import LogsPanel from './components/LogsPanel';
 import Dashboard from './components/Dashboard';
 import type { AuditReport } from './types';
 import IncrementalInsights from './components/IncrementalInsights';
+import UnifiedExportContent from './components/UnifiedExportContent';
 
 export type ExportType = 'md' | 'html' | 'pdf' | 'docx' | 'sped' | 'xlsx' | 'json';
 type PipelineStep = 'UPLOAD' | 'PROCESSING' | 'COMPLETE' | 'ERROR';
@@ -52,7 +53,7 @@ const App: React.FC = () => {
     }, [auditReport]);
 
 
-    const exportableContentRef = useRef<HTMLDivElement>(null);
+    const exportContentRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         if (isPipelineRunning) {
@@ -132,12 +133,15 @@ const App: React.FC = () => {
                 return;
             }
             
-            if (!exportableContentRef.current) return;
+            if (!exportContentRef.current) {
+                throw new Error('Elemento de exportação não encontrado.');
+            }
+            const exportTarget = exportContentRef.current;
             switch (type) {
-                case 'md': await exportToMarkdown(exportableContentRef.current, filename); break;
-                case 'html': await exportToHtml(exportableContentRef.current, filename, auditReport.summary.title); break;
-                case 'pdf': await exportToPdf(exportableContentRef.current, filename, auditReport.summary.title); break;
-                case 'docx': await exportToDocx(exportableContentRef.current, filename, auditReport.summary.title); break;
+                case 'md': await exportToMarkdown(exportTarget, filename); break;
+                case 'html': await exportToHtml(exportTarget, filename, auditReport.summary.title); break;
+                case 'pdf': await exportToPdf(exportTarget, filename, auditReport.summary.title); break;
+                case 'docx': await exportToDocx(exportTarget, filename, auditReport.summary.title); break;
             }
         } catch (exportError) {
             console.error(`Failed to export as ${type}:`, exportError);
@@ -180,11 +184,11 @@ const App: React.FC = () => {
                                     </button>
                                 )}
                             </div>
-                            <div ref={exportableContentRef}>
+                            <div>
                                 {activeView === 'report' ? (
-                                    <ReportViewer 
-                                        report={auditReport} 
-                                        onClassificationChange={handleClassificationChange} 
+                                    <ReportViewer
+                                        report={auditReport}
+                                        onClassificationChange={handleClassificationChange}
                                     />
                                 ) : activeView === 'dashboard' ? (
                                     <Dashboard report={auditReport} />
@@ -230,6 +234,30 @@ const App: React.FC = () => {
             </main>
             {error && pipelineStep !== 'ERROR' && <Toast message={error} onClose={() => { setError(null); }} />}
             {showLogs && <LogsPanel onClose={() => setShowLogs(false)} />}
+            <div
+                ref={exportContentRef}
+                data-export-root
+                aria-hidden="true"
+                style={{
+                    position: 'fixed',
+                    inset: 0,
+                    pointerEvents: 'none',
+                    opacity: 0,
+                    zIndex: -1,
+                    overflow: 'auto',
+                }}
+            >
+                {auditReport && (
+                    <div className="min-h-screen bg-gray-900 text-white p-8 space-y-10">
+                        <UnifiedExportContent
+                            report={auditReport}
+                            history={analysisHistory}
+                            messages={messages}
+                            onClassificationChange={handleClassificationChange}
+                        />
+                    </div>
+                )}
+            </div>
         </div>
     );
 };
