@@ -1,170 +1,304 @@
 import React from 'react';
 import type { ChartData } from '../types';
 
+type EmptyStateProps = {
+  message?: string;
+};
+
+const COLOR_PALETTE = [
+  '#38bdf8',
+  '#34d399',
+  '#f87171',
+  '#fbbf24',
+  '#a78bfa',
+  '#f472b6',
+  '#60a5fa',
+  '#818cf8',
+  '#a3e635',
+  '#2dd4bf',
+];
+
+const EmptyState: React.FC<EmptyStateProps> = ({ message }) => (
+  <div className="border border-dashed border-gray-600 bg-gray-800/40 rounded-lg p-6 text-center text-sm text-gray-400">
+    {message ?? 'Sem dados suficientes para exibir o grafico.'}
+  </div>
+);
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
 const Chart: React.FC<ChartData> = ({ type, title, data, options, xAxisLabel, yAxisLabel }) => {
-  const colors = [
-    '#38bdf8', '#34d399', '#f87171', '#fbbf24', '#a78bfa', '#f472b6', 
-    '#60a5fa', '#818cf8', '#a3e635', '#2dd4bf'
-  ];
+  const safeData = Array.isArray(data)
+    ? data.filter(point => point && typeof point.value === 'number' && Number.isFinite(point.value))
+    : [];
+  const allZeros = safeData.every(point => point.value === 0);
 
   const chartHeight = 200;
-  const chartWidth = 300;
-  const padding = { top: 10, right: 10, bottom: 30, left: 30 };
+  const chartWidth = 320;
+  const padding = { top: 16, right: 16, bottom: 32, left: 40 };
   const plotWidth = chartWidth - padding.left - padding.right;
   const plotHeight = chartHeight - padding.top - padding.bottom;
 
   const renderBarChart = () => {
-    const maxValue = Math.max(...data.map(d => d.value), 0);
-
+    if (safeData.length === 0) {
+      return <EmptyState />;
+    }
+    const maxValue = Math.max(...safeData.map(item => item.value));
+    if (maxValue === 0) {
+      return <EmptyState message="Todos os valores desta metrica estao zerados no filtro atual." />;
+    }
+    const barWidth = plotWidth / safeData.length;
     return (
-      <svg width="100%" height={chartHeight + 40} viewBox={`0 0 ${chartWidth} ${chartHeight + 40}`}>
-        {/* Y Axis Label */}
+      <svg
+        width="100%"
+        height={chartHeight + 40}
+        viewBox={`0 0 ${chartWidth} ${chartHeight + 40}`}
+        role="img"
+        aria-label={`Grafico de barras: ${title}`}
+      >
         {yAxisLabel && (
-           <text x={-(chartHeight / 2)} y={10} transform="rotate(-90)" textAnchor="middle" fontSize="10" fill="#9ca3af">{yAxisLabel}</text>
+          <text
+            x={-(chartHeight / 2)}
+            y={12}
+            transform="rotate(-90)"
+            textAnchor="middle"
+            fontSize="10"
+            fill="#9ca3af"
+          >
+            {yAxisLabel}
+          </text>
         )}
-        {data.map((d, i) => {
-          const barHeight = maxValue > 0 ? (d.value / maxValue) * plotHeight : 0;
-          const barWidth = plotWidth / data.length;
+        <line
+          x1={padding.left}
+          y1={padding.top + plotHeight}
+          x2={chartWidth - padding.right}
+          y2={padding.top + plotHeight}
+          stroke="#4b5563"
+        />
+        <line
+          x1={padding.left}
+          y1={padding.top}
+          x2={padding.left}
+          y2={padding.top + plotHeight}
+          stroke="#4b5563"
+        />
+        {safeData.map((item, index) => {
+          const height = (item.value / maxValue) * plotHeight;
+          const x = padding.left + index * barWidth + barWidth * 0.1;
+          const y = padding.top + plotHeight - height;
           return (
-            <g key={i}>
+            <g key={index}>
               <rect
-                x={padding.left + i * barWidth + barWidth * 0.1}
-                y={padding.top + plotHeight - barHeight}
+                x={x}
+                y={y}
                 width={barWidth * 0.8}
-                height={barHeight}
-                fill={d.color || colors[i % colors.length]}
+                height={height}
+                fill={item.color || COLOR_PALETTE[index % COLOR_PALETTE.length]}
               />
-              <text x={padding.left + i * barWidth + barWidth / 2} y={chartHeight - 5} textAnchor="middle" fontSize="10" fill="#9ca3af">{d.label}</text>
+              <text
+                x={padding.left + index * barWidth + barWidth / 2}
+                y={chartHeight + 20}
+                fontSize="10"
+                fill="#9ca3af"
+                textAnchor="middle"
+              >
+                {item.label ?? `Item ${index + 1}`}
+              </text>
             </g>
           );
         })}
-        {/* Axes */}
-        <line x1={padding.left} y1={chartHeight-padding.bottom+padding.top} x2={chartWidth-padding.right} y2={chartHeight-padding.bottom+padding.top} stroke="#4b5563" />
-        <line x1={padding.left} y1={padding.top} x2={padding.left} y2={chartHeight-padding.bottom+padding.top} stroke="#4b5563" />
-        {/* X Axis Label */}
         {xAxisLabel && (
-             <text x={chartWidth/2} y={chartHeight+25} textAnchor="middle" fontSize="10" fill="#9ca3af">{xAxisLabel}</text>
+          <text x={chartWidth / 2} y={chartHeight + 36} textAnchor="middle" fontSize="10" fill="#9ca3af">
+            {xAxisLabel}
+          </text>
         )}
       </svg>
     );
   };
 
   const renderPieChart = () => {
-    const total = data.reduce((sum, d) => sum + d.value, 0);
-    if (total === 0) return <div className="text-center text-gray-500">Sem dados para exibir.</div>;
-    
-    let startAngle = 0;
-    const radius = 80;
-    const cx = 100, cy = 100;
+    if (safeData.length === 0) {
+      return <EmptyState />;
+    }
+    const total = safeData.reduce((sum, item) => sum + Math.max(item.value, 0), 0);
+    if (total === 0) {
+      return <EmptyState message="Todos os valores desta metrica estao zerados no filtro atual." />;
+    }
+    let cumulative = 0;
+    const radius = Math.min(chartWidth, chartHeight) / 2 - 12;
+    const centerX = chartWidth / 2;
+    const centerY = chartHeight / 2 + 8;
 
-    const getArcPath = (start: number, end: number) => {
-      const startRad = (start * Math.PI) / 180;
-      const endRad = (end * Math.PI) / 180;
-      const x1 = cx + radius * Math.cos(startRad);
-      const y1 = cy + radius * Math.sin(startRad);
-      const x2 = cx + radius * Math.cos(endRad);
-      const y2 = cy + radius * Math.sin(endRad);
-      const largeArcFlag = end - start <= 180 ? 0 : 1;
-      return `M ${cx},${cy} L ${x1},${y1} A ${radius},${radius} 0 ${largeArcFlag} 1 ${x2},${y2} Z`;
+    const polarToCartesian = (cx: number, cy: number, r: number, angleDeg: number) => {
+      const angleRad = ((angleDeg - 90) * Math.PI) / 180;
+      return {
+        x: cx + r * Math.cos(angleRad),
+        y: cy + r * Math.sin(angleRad),
+      };
     };
 
     return (
-      <div className="flex items-center flex-wrap justify-center">
-        <svg width="200" height="200" viewBox="0 0 200 200">
-          {data.map((d, i) => {
-            const sliceAngle = (d.value / total) * 360;
-            const endAngle = startAngle + sliceAngle;
-            const path = getArcPath(startAngle, endAngle);
-            startAngle = endAngle;
-            return <path key={i} d={path} fill={d.color || colors[i % colors.length]} />;
-          })}
-        </svg>
-        <div className="ml-4 text-xs">
-          {data.map((d, i) => (
-            <div key={i} className="flex items-center mb-1">
-              <span className="w-3 h-3 rounded-sm mr-2 flex-shrink-0" style={{ backgroundColor: d.color || colors[i % colors.length] }}></span>
-              <span>{d.label} ({(d.value / total * 100).toFixed(1)}%)</span>
-            </div>
-          ))}
-        </div>
-      </div>
+      <svg width="100%" height={chartHeight + 40} viewBox={`0 0 ${chartWidth} ${chartHeight + 40}`} role="img" aria-label={`Grafico de pizza: ${title}`}>
+        {safeData.map((item, index) => {
+          const value = Math.max(item.value, 0);
+          const angle = (value / total) * 360;
+          const start = polarToCartesian(centerX, centerY, radius, cumulative);
+          cumulative += angle;
+          const end = polarToCartesian(centerX, centerY, radius, cumulative);
+          const largeArc = angle > 180 ? 1 : 0;
+          const pathData = [
+            `M ${centerX} ${centerY}`,
+            `L ${start.x} ${start.y}`,
+            `A ${radius} ${radius} 0 ${largeArc} 1 ${end.x} ${end.y}`,
+            'Z',
+          ].join(' ');
+          return (
+            <path
+              key={index}
+              d={pathData}
+              fill={item.color || COLOR_PALETTE[index % COLOR_PALETTE.length]}
+              stroke="#111827"
+              strokeWidth={1}
+            />
+          );
+        })}
+      </svg>
     );
   };
-  
-  const renderLineChart = () => {
-    if (data.length < 2) return <div className="text-center text-gray-500">Dados insuficientes para gráfico de linha.</div>;
 
-    const maxValue = Math.max(...data.map(d => d.value));
-    const minValue = Math.min(...data.map(d => d.value));
-    const yRange = maxValue - minValue;
-    
-    const points = data.map((d, i) => {
-        const x = padding.left + (i / (data.length - 1)) * plotWidth;
-        const y = padding.top + plotHeight - (yRange > 0 ? ((d.value - minValue) / yRange) * plotHeight : plotHeight / 2);
-        return `${x},${y}`;
-    }).join(' ');
+  const renderLineChart = () => {
+    if (safeData.length < 2) {
+      return <EmptyState message="Dados insuficientes para grafico de linha." />;
+    }
+    const maxValue = Math.max(...safeData.map(item => item.value));
+    const minValue = Math.min(...safeData.map(item => item.value));
+    const range = maxValue - minValue || 1;
+    const pathData = safeData
+      .map((item, index) => {
+        const x = padding.left + (index / (safeData.length - 1)) * plotWidth;
+        const y = padding.top + plotHeight - ((item.value - minValue) / range) * plotHeight;
+        return `${index === 0 ? 'M' : 'L'} ${x} ${y}`;
+      })
+      .join(' ');
 
     return (
-         <svg width="100%" height={chartHeight + 40} viewBox={`0 0 ${chartWidth} ${chartHeight + 40}`}>
-            {/* Y Axis Label */}
-            {yAxisLabel && (
-              <text x={-(chartHeight / 2)} y={10} transform="rotate(-90)" textAnchor="middle" fontSize="10" fill="#9ca3af">{yAxisLabel}</text>
-            )}
-            <polyline
-                fill="none"
-                stroke={colors[0]}
-                strokeWidth="2"
-                points={points}
-            />
-            {data.map((d, i) => {
-                 const x = padding.left + (i / (data.length - 1)) * plotWidth;
-                 return <text key={i} x={x} y={chartHeight - 5} textAnchor="middle" fontSize="10" fill="#9ca3af">{d.label}</text>
-            })}
-             {/* Axes */}
-            <line x1={padding.left} y1={chartHeight-padding.bottom+padding.top} x2={chartWidth-padding.right} y2={chartHeight-padding.bottom+padding.top} stroke="#4b5563" />
-            <line x1={padding.left} y1={padding.top} x2={padding.left} y2={chartHeight-padding.bottom+padding.top} stroke="#4b5563" />
-            {/* X Axis Label */}
-            {xAxisLabel && (
-                <text x={chartWidth/2} y={chartHeight+25} textAnchor="middle" fontSize="10" fill="#9ca3af">{xAxisLabel}</text>
-            )}
-        </svg>
-    )
+      <svg
+        width="100%"
+        height={chartHeight + 40}
+        viewBox={`0 0 ${chartWidth} ${chartHeight + 40}`}
+        role="img"
+        aria-label={`Grafico de linha: ${title}`}
+      >
+        {yAxisLabel && (
+          <text
+            x={-(chartHeight / 2)}
+            y={12}
+            transform="rotate(-90)"
+            textAnchor="middle"
+            fontSize="10"
+            fill="#9ca3af"
+          >
+            {yAxisLabel}
+          </text>
+        )}
+        <line
+          x1={padding.left}
+          y1={padding.top + plotHeight}
+          x2={chartWidth - padding.right}
+          y2={padding.top + plotHeight}
+          stroke="#4b5563"
+        />
+        <line
+          x1={padding.left}
+          y1={padding.top}
+          x2={padding.left}
+          y2={padding.top + plotHeight}
+          stroke="#4b5563"
+        />
+        <path d={pathData} fill="none" stroke={COLOR_PALETTE[0]} strokeWidth={2} />
+        {safeData.map((item, index) => {
+          const x = padding.left + (index / (safeData.length - 1)) * plotWidth;
+          const y = padding.top + plotHeight - ((item.value - minValue) / range) * plotHeight;
+          return <circle key={index} cx={x} cy={y} r={3} fill={COLOR_PALETTE[0]} />;
+        })}
+        {xAxisLabel && (
+          <text x={chartWidth / 2} y={chartHeight + 36} textAnchor="middle" fontSize="10" fill="#9ca3af">
+            {xAxisLabel}
+          </text>
+        )}
+      </svg>
+    );
   };
 
   const renderScatterChart = () => {
-    if (data.length === 0) return <div className="text-center text-gray-500">Sem dados para exibir.</div>;
-    const xValues = data.map(d => d.x ?? 0);
-    const yValues = data.map(d => d.value);
+    if (safeData.length === 0) {
+      return <EmptyState />;
+    }
+    const xValues = safeData.map(item => item.x ?? 0);
+    const yValues = safeData.map(item => item.value);
     const maxX = Math.max(...xValues);
     const minX = Math.min(...xValues);
     const maxY = Math.max(...yValues);
     const minY = Math.min(...yValues);
-    const xRange = maxX - minX;
-    const yRange = maxY - minY;
+    const xRange = maxX - minX || 1;
+    const yRange = maxY - minY || 1;
 
     return (
-        <svg width="100%" height={chartHeight + 40} viewBox={`0 0 ${chartWidth} ${chartHeight + 40}`}>
-            {/* Y Axis Label */}
-            {yAxisLabel && (
-              <text x={-(chartHeight / 2)} y={10} transform="rotate(-90)" textAnchor="middle" fontSize="10" fill="#9ca3af">{yAxisLabel}</text>
-            )}
-            {data.map((d, i) => {
-                const cx = padding.left + (xRange > 0 ? ((d.x ?? 0) - minX) / xRange * plotWidth : plotWidth / 2);
-                const cy = padding.top + plotHeight - (yRange > 0 ? (d.value - minY) / yRange * plotHeight : plotHeight / 2);
-                return <circle key={i} cx={cx} cy={cy} r="3" fill={d.color || colors[i % colors.length]} />;
-            })}
-            {/* Axes */}
-            <line x1={padding.left} y1={chartHeight-padding.bottom+padding.top} x2={chartWidth-padding.right} y2={chartHeight-padding.bottom+padding.top} stroke="#4b5563" />
-            <line x1={padding.left} y1={padding.top} x2={padding.left} y2={chartHeight-padding.bottom+padding.top} stroke="#4b5563" />
-             {/* X Axis Label */}
-             {xAxisLabel && (
-                <text x={chartWidth/2} y={chartHeight+25} textAnchor="middle" fontSize="10" fill="#9ca3af">{xAxisLabel}</text>
-            )}
-        </svg>
+      <svg
+        width="100%"
+        height={chartHeight + 40}
+        viewBox={`0 0 ${chartWidth} ${chartHeight + 40}`}
+        role="img"
+        aria-label={`Grafico de dispersao: ${title}`}
+      >
+        {yAxisLabel && (
+          <text
+            x={-(chartHeight / 2)}
+            y={12}
+            transform="rotate(-90)"
+            textAnchor="middle"
+            fontSize="10"
+            fill="#9ca3af"
+          >
+            {yAxisLabel}
+          </text>
+        )}
+        <line
+          x1={padding.left}
+          y1={padding.top + plotHeight}
+          x2={chartWidth - padding.right}
+          y2={padding.top + plotHeight}
+          stroke="#4b5563"
+        />
+        <line
+          x1={padding.left}
+          y1={padding.top}
+          x2={padding.left}
+          y2={padding.top + plotHeight}
+          stroke="#4b5563"
+        />
+        {safeData.map((item, index) => {
+          const cx = padding.left + ((item.x ?? 0) - minX) / xRange * plotWidth;
+          const cy = padding.top + plotHeight - ((item.value - minY) / yRange) * plotHeight;
+          return (
+            <circle
+              key={index}
+              cx={clamp(cx, padding.left, chartWidth - padding.right)}
+              cy={clamp(cy, padding.top, padding.top + plotHeight)}
+              r={3}
+              fill={item.color || COLOR_PALETTE[index % COLOR_PALETTE.length]}
+            />
+          );
+        })}
+        {xAxisLabel && (
+          <text x={chartWidth / 2} y={chartHeight + 36} textAnchor="middle" fontSize="10" fill="#9ca3af">
+            {xAxisLabel}
+          </text>
+        )}
+      </svg>
     );
   };
 
-  const renderChart = () => {
+  const renderChartBody = () => {
     switch (type) {
       case 'bar':
         return renderBarChart();
@@ -175,14 +309,32 @@ const Chart: React.FC<ChartData> = ({ type, title, data, options, xAxisLabel, yA
       case 'scatter':
         return renderScatterChart();
       default:
-        return <p>Tipo de gráfico desconhecido: {type}</p>;
+        return <EmptyState message={`Tipo de grafico desconhecido: ${type}.`} />;
     }
   };
+
+  if (safeData.length === 0) {
+    return (
+      <div>
+        <h4 className="text-md font-semibold text-gray-300 mb-2 text-center">{title}</h4>
+        <EmptyState />
+      </div>
+    );
+  }
+
+  if (allZeros && type !== 'pie') {
+    return (
+      <div>
+        <h4 className="text-md font-semibold text-gray-300 mb-2 text-center">{title}</h4>
+        <EmptyState message="Todos os valores desta metrica estao zerados no filtro atual." />
+      </div>
+    );
+  }
 
   return (
     <div>
       <h4 className="text-md font-semibold text-gray-300 mb-2 text-center">{title}</h4>
-      {renderChart()}
+      {renderChartBody()}
     </div>
   );
 };

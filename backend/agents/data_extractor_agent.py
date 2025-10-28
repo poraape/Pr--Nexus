@@ -910,11 +910,79 @@ def _infer_column_mapping(
     return mapping, diagnostics
 
 
-def _guess_textual_value(row: Dict[str, str], candidates: List[str]) -> Optional[str]:
+def _is_valid_textual(value: Optional[str]) -> bool:
+    if not isinstance(value, str):
+        return False
+    stripped = value.strip()
+    if not stripped:
+        return False
+    return any(ch.isalpha() for ch in stripped)
+
+
+def _should_ignore_textual_header(header: str) -> bool:
+    tokens = {
+        "modelo",
+        "serie",
+        "natureza",
+        "indicador",
+        "destinatario",
+        "emitente",
+        "cpf",
+        "cnpj",
+        "inscricao",
+        "municipio",
+        "cidade",
+        "presenca",
+        "consumidor",
+        "data",
+        "numero",
+        "nfe",
+        "nota",
+        "chave",
+        "destino",
+        "origem",
+        "operacao",
+        "uf",
+    }
+    return any(token in header for token in tokens)
+
+
+def _is_preferred_description_header(header: str) -> bool:
+    preferred_tokens = {
+        "descricao",
+        "produto",
+        "servico",
+        "item",
+        "mercadoria",
+        "material",
+    }
+    return any(token in header for token in preferred_tokens)
+
+
+def _textual_quality_score(value: str) -> int:
+    alpha_count = sum(1 for ch in value if ch.isalpha())
+    digit_penalty = sum(1 for ch in value if ch.isdigit())
+    return alpha_count - digit_penalty
+
+
+def _guess_textual_value(row: Dict[str, str], candidates: List[str], display_map: Dict[str, str]) -> Optional[str]:
+    preferred: List[Tuple[int, str]] = []
     for column in candidates:
         value = row.get(column)
-        if isinstance(value, str) and any(ch.isalpha() for ch in value):
-            return value
+        if not _is_valid_textual(value):
+            continue
+        header = _normalize_text(display_map.get(column, column))
+        if not header:
+            continue
+        if _should_ignore_textual_header(header):
+            continue
+        if _is_preferred_description_header(header):
+            score = _textual_quality_score(str(value))
+            preferred.append((score, str(value)))
+
+    if preferred:
+        preferred.sort(key=lambda item: item[0], reverse=True)
+        return preferred[0][1]
     return None
 
 
@@ -1191,6 +1259,9 @@ def _convert_tabular_rows(
     analyzer = _SemanticAnalyzer(display_map, mapping)
     result: List[Dict[str, object]] = []
     textual_candidates = [column for column in columns if column not in mapping.values()]
+    has_item_total_field = "produto_valor_total" in mapping
+    has_item_unit_field = "produto_valor_unit" in mapping
+    has_item_qty_field = "produto_qtd" in mapping
 
     for row in rows:
         entry: Dict[str, object] = {
@@ -1221,9 +1292,9 @@ def _convert_tabular_rows(
         }
 
         if not entry["produto_nome"]:
-            entry["produto_nome"] = _guess_textual_value(row, textual_candidates)
+            entry["produto_nome"] = _guess_textual_value(row, textual_candidates, display_map)
         elif isinstance(entry["produto_nome"], str) and not _contains_alpha(entry["produto_nome"]):
-            fallback_name = _guess_textual_value(row, textual_candidates)
+            fallback_name = _guess_textual_value(row, textual_candidates, display_map)
             if fallback_name:
                 entry["produto_nome"] = fallback_name
 
@@ -1255,14 +1326,14 @@ def _convert_tabular_rows(
         if entry["valor_total_nfe"] == 0.0 and entry["produto_valor_total"]:
             entry["valor_total_nfe"] = entry["produto_valor_total"]
 
-        if entry["produto_valor_total"] == 0.0:
+        if has_item_total_field and entry["produto_valor_total"] == 0.0:
             fallback_value = parse_safe_float(row.get(mapping.get("valor_total_nfe", "")))
             if fallback_value:
                 entry["produto_valor_total"] = fallback_value
             elif nfe_id and nfe_id in totals_by_nfe:
                 entry["produto_valor_total"] = totals_by_nfe[nfe_id]
 
-        if entry["produto_valor_unit"] == 0.0 and entry["produto_qtd"]:
+        if has_item_unit_field and has_item_qty_field and entry["produto_valor_unit"] == 0.0 and entry["produto_qtd"]:
             qty = entry["produto_qtd"]
             if qty:
                 entry["produto_valor_unit"] = (entry["produto_valor_total"] / qty) if qty else 0.0

@@ -72,8 +72,8 @@ export interface Inconsistency {
 }
 
 export interface ClassificationResult {
-    operationType: 'Compra' | 'Venda' | 'Devolução' | 'Serviço' | 'Transferência' | 'Outros';
-    businessSector: string; // e.g., 'Indústria', 'Comércio', 'Tecnologia'
+    operationType: 'Compra' | 'Venda' | 'Devolucao' | 'Servico' | 'Transferencia' | 'Outros';
+    businessSector: string; // e.g., 'Industria', 'Comercio', 'Tecnologia'
     confidence: number;
 }
 
@@ -88,7 +88,7 @@ export interface AuditedDocument {
 export interface AccountingEntry {
   docName: string;
   account: string;
-  type: 'D' | 'C'; // Débito or Crédito
+  type: 'D' | 'C'; // Debito or Credito
   value: number;
 }
 
@@ -99,10 +99,10 @@ export interface SpedFile {
 
 // --- New Types for AI-Driven Analysis ---
 
-export type AIFindingSeverity = 'INFO' | 'BAIXA' | 'MÉDIA' | 'ALTA';
+export type AIFindingSeverity = 'INFO' | 'BAIXA' | 'MEDIA' | 'ALTA';
 
 export interface AIDrivenInsight {
-    category: 'Eficiência Operacional' | 'Risco Fiscal' | 'Oportunidade de Otimização' | 'Anomalia de Dados';
+    category: 'Eficiencia Operacional' | 'Risco Fiscal' | 'Oportunidade de Otimizacao' | 'Anomalia de Dados';
     description: string;
     severity: AIFindingSeverity;
     evidence: string[]; // e.g., document names or product names
@@ -131,7 +131,7 @@ export interface DeterministicDiscrepancy {
 
 export interface DeterministicCrossValidationResult {
   comparisonKey: string; // e.g., the product name
-  attribute: string; // e.g., 'Preço Unitário'
+  attribute: string; // e.g., 'Preco Unitario'
   description: string;
   discrepancies: DeterministicDiscrepancy[];
   severity: 'ALERTA' | 'INFO';
