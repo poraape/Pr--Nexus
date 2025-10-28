@@ -211,7 +211,7 @@ Um workflow GitHub Actions (`.github/workflows/deploy.yml`) automatiza testes, b
 ### Provisionamento da Space (modo gratuito)
 
 - Crie a Space no Hugging Face como `Docker` e selecione o hardware gratuito `CPU Basic`; o arquivo `space.yaml` ja define `app_port=7860` para a execucao direta do container.
-- Em *Settings -> Variables & secrets* cadastre `GEMINI_API_KEY` (usa o modelo gratuito `gemini-1.5-flash-8b`) e, se quiser fixar explicitamente, adicione `LLM_PROVIDER=gemini` e `GEMINI_MODEL=gemini-1.5-flash-8b`.
+- Em *Settings -> Variables & secrets* cadastre `GEMINI_API_KEY` (usa o modelo gratuito `gemini-2.5-flash`) e, se quiser fixar explicitamente, adicione `LLM_PROVIDER=gemini` e `GEMINI_MODEL=gemini-2.5-flash`.
 - Nao e preciso banco externo: SQLite, Chroma e uploads persistem em `/data`; use *Factory reset* na Space para limpar o estado quando desejar.
 - O script `start.sh` prepara diretorios, aplica Alembic, configura o runtime `PORT` e sobe o `uvicorn` com `--proxy-headers`, garantindo compatibilidade com o proxy da plataforma.
 - O primeiro build consome ~10 minutos porque instala OCR (`tesseract` + `poppler`); releases seguintes aproveitam o cache Docker mantido pela Hugging Face.

@@ -42,6 +42,8 @@ class LLMClient:
             genai.configure(api_key=settings.gemini_api_key)
             candidates = [
                 settings.gemini_model,
+                "gemini-2.5-flash",
+                "gemini-2.5-flash-latest",
                 "gemini-1.5-flash",
                 "gemini-1.5-flash-latest",
             ]

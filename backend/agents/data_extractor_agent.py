@@ -567,6 +567,25 @@ def _score_numeric_column(values: List[Optional[str]], header: str) -> float:
     return max(0.0, min(base_score, 1.0))
 
 
+def _score_reasonable_amount(values: List[Optional[str]]) -> float:
+    numeric_values: List[float] = []
+    decimal_hint = 0
+    for value in values:
+        if value in (None, ""):
+            continue
+        if isinstance(value, str) and ("," in value or "." in value):
+            decimal_hint += 1
+        parsed = parse_safe_float(value)
+        if parsed != 0.0:
+            numeric_values.append(abs(parsed))
+    if not numeric_values:
+        return 0.0
+    bounded = sum(1 for number in numeric_values if 1e-6 < number < 1e11)
+    bounded_score = bounded / len(numeric_values)
+    decimal_score = decimal_hint / max(len(values), 1)
+    return min(1.0, bounded_score * 0.7 + decimal_score * 0.3)
+
+
 def _score_date_column(values: List[Optional[str]]) -> float:
     pattern = re.compile(r"\b(\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})\b")
     matches = 0
@@ -698,7 +717,11 @@ def _infer_column_mapping(
         "nfe_id": lambda header, values: (_score_access_key_column(values) * 0.7)
         + (0.3 if "chave" in header or "nfe" in header else 0.0),
         "data_emissao": lambda header, values: _score_date_column(values),
-        "valor_total_nfe": lambda header, values: _score_numeric_column(values, header + " total" if "nota" in header or "nf" in header else header),
+        "valor_total_nfe": lambda header, values: (
+            _score_numeric_column(values, header + " total" if "nota" in header or "nf" in header else header)
+            + (_score_reasonable_amount(values) * 0.6)
+            - (_score_access_key_column(values) * 0.7)
+        ),
         "produto_valor_total": lambda header, values: _score_numeric_column(values, header + " item" if "item" in header or "produto" in header else header),
         "produto_valor_unit": lambda header, values: _score_numeric_column(values, header + " unit"),
         "produto_qtd": lambda header, values: _score_numeric_column(values, header + " qtd"),
