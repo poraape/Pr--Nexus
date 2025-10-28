@@ -133,15 +133,32 @@ class Settings(BaseSettings):
         else:
             resolved_runtime = None
 
-        if resolved_runtime and "storage_path" not in self.model_fields_set:
-            self.storage_path = (resolved_runtime / "uploads").resolve()
-        else:
-            self.storage_path = self.storage_path.expanduser().resolve()
+        storage_default = Path("/data/uploads")
+        chroma_default = Path("/data/chroma")
 
-        if resolved_runtime and "chroma_persist_directory" not in self.model_fields_set:
-            self.chroma_persist_directory = (resolved_runtime / "chroma").resolve()
-        else:
-            self.chroma_persist_directory = self.chroma_persist_directory.expanduser().resolve()
+        current_storage = self.storage_path.expanduser()
+        current_chroma = self.chroma_persist_directory.expanduser()
+
+        if resolved_runtime is not None:
+            should_override_storage = (
+                "storage_path" not in self.model_fields_set
+                or current_storage == storage_default
+                or str(current_storage).lower().endswith("\\data\\uploads")
+                or str(current_storage).lower().endswith("/data/uploads")
+            )
+            should_override_chroma = (
+                "chroma_persist_directory" not in self.model_fields_set
+                or current_chroma == chroma_default
+                or str(current_chroma).lower().endswith("\\data\\chroma")
+                or str(current_chroma).lower().endswith("/data/chroma")
+            )
+            if should_override_storage:
+                current_storage = resolved_runtime / "uploads"
+            if should_override_chroma:
+                current_chroma = resolved_runtime / "chroma"
+
+        self.storage_path = current_storage.resolve()
+        self.chroma_persist_directory = current_chroma.resolve()
 
         return self
 

@@ -12,9 +12,10 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from backend.api.endpoints import router as api_router
 from backend.core.config import settings
@@ -51,10 +52,17 @@ else:
 if static_dir is not None:
     logger.info("Serving frontend static files from %s", static_dir)
     app.mount(
-        "/",
+        "/static",
         StaticFiles(directory=static_dir, html=True),
-        name="frontend",
+        name="frontend-static",
     )
+
+    @app.get("/", include_in_schema=False)
+    async def serve_root() -> FileResponse:
+        index_path = static_dir / "index.html"
+        if not index_path.exists():
+            raise HTTPException(status_code=404, detail="index.html not found")
+        return FileResponse(index_path)
 else:  # pragma: no cover - depends on deployment setup
     logger.warning(
         "Frontend build directory not found. Checked: %s and %s",
@@ -106,3 +114,12 @@ async def healthcheck() -> dict[str, str]:
     """Simple healthcheck endpoint."""
 
     return {"status": "ok"}
+
+
+if static_dir is not None:
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str) -> FileResponse:
+        index_path = static_dir / "index.html"
+        if not index_path.exists():
+            raise HTTPException(status_code=404, detail="Resource not found")
+        return FileResponse(index_path)
