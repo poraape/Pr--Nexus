@@ -93,6 +93,7 @@ CSV_FIELD_ALIASES: Dict[str, List[str]] = {
         "total nota fiscal",
         "valor nf-e",
         "total nota",
+        "valor total",
     ],
     "emitente_nome": [
         "nome emitente",
@@ -552,13 +553,18 @@ def _score_numeric_column(values: List[Optional[str]], header: str) -> float:
     if total == 0:
         return 0.0
     base_score = numeric / total
-    if "total" in header:
+    header_lower = header.lower()
+    if "valor" in header_lower:
         base_score += 0.2
-    if "unit" in header or "unitario" in header:
+    if "total" in header_lower:
+        base_score += 0.2
+    if "unit" in header_lower or "unitario" in header_lower or "unidade" in header_lower:
         base_score += 0.1
-    if "qtd" in header or "quant" in header:
+    if "qtd" in header_lower or "quant" in header_lower:
         base_score += 0.1
-    return min(base_score, 1.0)
+    if any(token in header_lower for token in ("modelo", "serie", "natureza", "indicador")):
+        base_score -= 0.3
+    return max(0.0, min(base_score, 1.0))
 
 
 def _score_date_column(values: List[Optional[str]]) -> float:
@@ -662,12 +668,13 @@ def _infer_column_mapping(
     mapping: Dict[str, str] = {}
     diagnostics: Dict[str, Dict[str, object]] = {}
     used_columns: set[str] = set()
+    reusable_fields = {"valor_total_nfe"}
 
     for field, aliases in CSV_FIELD_ALIASES.items():
         best_column: Optional[str] = None
         best_score = 0.0
         for column in columns:
-            if column in used_columns:
+            if column in used_columns and field not in reusable_fields:
                 continue
             score = _score_header_match(normalized_headers.get(column, ""), aliases)
             if score > best_score:
@@ -675,7 +682,8 @@ def _infer_column_mapping(
                 best_score = score
         if best_column and best_score >= 0.65:
             mapping[field] = best_column
-            used_columns.add(best_column)
+            if field not in reusable_fields:
+                used_columns.add(best_column)
             diagnostics[field] = {
                 "column": display_map.get(best_column, best_column),
                 "score": round(best_score, 3),
@@ -708,7 +716,7 @@ def _infer_column_mapping(
         best_column = None
         best_score = 0.0
         for column in columns:
-            if column in used_columns:
+            if column in used_columns and field not in reusable_fields:
                 continue
             header = normalized_headers.get(column, "")
             values = collect_values(column)
@@ -718,12 +726,51 @@ def _infer_column_mapping(
                 best_column = column
         if best_column and best_score >= 0.55:
             mapping[field] = best_column
-            used_columns.add(best_column)
+            if field not in reusable_fields:
+                used_columns.add(best_column)
             diagnostics[field] = {
                 "column": display_map.get(best_column, best_column),
                 "score": round(best_score, 3),
                 "matched_by": "values",
             }
+
+    def _prefer_column(field: str, predicate: Callable[[str], bool]) -> None:
+        current = mapping.get(field)
+        if not current or predicate(normalized_headers.get(current, "")):
+            return
+        for column in columns:
+            if column == current:
+                continue
+            normalized = normalized_headers.get(column, "")
+            if not predicate(normalized):
+                continue
+            if column in used_columns and field not in reusable_fields:
+                continue
+            if field not in reusable_fields:
+                used_columns.discard(current)
+                used_columns.add(column)
+            mapping[field] = column
+            diagnostics[field] = {
+                "column": display_map.get(column, column),
+                "score": 1.0,
+                "matched_by": "alias_adjustment",
+            }
+            break
+
+    _prefer_column(
+        "valor_total_nfe",
+        lambda header: (
+            ("valor" in header) or ("total" in header)
+        )
+        and "chave" not in header
+        and "modelo" not in header,
+    )
+    _prefer_column(
+        "produto_nome",
+        lambda header: ("descricao" in header or "produto servico" in header or "produto" in header and "descricao" in header)
+        and "numero" not in header
+        and "cod" not in header
+    )
 
     return mapping, diagnostics
 
@@ -1040,6 +1087,10 @@ def _convert_tabular_rows(
 
         if not entry["produto_nome"]:
             entry["produto_nome"] = _guess_textual_value(row, textual_candidates)
+        elif isinstance(entry["produto_nome"], str) and not _contains_alpha(entry["produto_nome"]):
+            fallback_name = _guess_textual_value(row, textual_candidates)
+            if fallback_name:
+                entry["produto_nome"] = fallback_name
 
         if entry["emitente_uf"]:
             entry["emitente_uf"] = str(entry["emitente_uf"]).upper()
@@ -1049,6 +1100,20 @@ def _convert_tabular_rows(
         nfe_id = entry.get("nfe_id")
         if nfe_id and isinstance(nfe_id, str):
             entry["nfe_id"] = nfe_id.strip() or None
+            nfe_id = entry["nfe_id"]
+
+        if (
+            nfe_id
+            and nfe_id in totals_by_nfe
+            and (
+                mapping.get("valor_total_nfe") == mapping.get("nfe_id")
+                or (
+                    isinstance(entry["valor_total_nfe"], (int, float))
+                    and entry["valor_total_nfe"] >= 1e12
+                )
+            )
+        ):
+            entry["valor_total_nfe"] = totals_by_nfe[nfe_id]
 
         if entry["valor_total_nfe"] == 0.0 and nfe_id and nfe_id in totals_by_nfe:
             entry["valor_total_nfe"] = totals_by_nfe[nfe_id]
