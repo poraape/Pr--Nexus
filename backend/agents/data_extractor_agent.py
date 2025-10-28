@@ -6,7 +6,9 @@ import json
 import logging
 import re
 import unicodedata
-from collections import Counter
+from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 from zipfile import ZipFile
@@ -261,6 +263,33 @@ CSV_NUMERIC_FIELDS = {
     "produto_valor_iss",
 }
 
+NUMERIC_FIELDS: Tuple[str, ...] = tuple(sorted(CSV_NUMERIC_FIELDS))
+
+CATEGORICAL_FIELDS: Tuple[str, ...] = (
+    "emitente_nome",
+    "emitente_cnpj",
+    "emitente_uf",
+    "destinatario_nome",
+    "destinatario_cnpj",
+    "destinatario_uf",
+    "produto_nome",
+    "produto_cfop",
+    "produto_ncm",
+)
+
+VALUE_WEIGHTED_FIELDS: Tuple[str, ...] = (
+    "emitente_nome",
+    "destinatario_nome",
+    "emitente_uf",
+    "destinatario_uf",
+    "produto_nome",
+    "produto_cfop",
+)
+
+DATE_FIELDS: Tuple[str, ...] = ("data_emissao",)
+
+MAX_CHART_ITEMS = 6
+
 
 def _normalize_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value or "")
@@ -297,22 +326,31 @@ def _score_header_match(normalized_header: str, aliases: List[str]) -> float:
 
 
 def _detect_csv_delimiter(sample_text: str) -> str:
-    sample = "\n".join(sample_text.splitlines()[:50])
+    sample_lines = sample_text.splitlines()[:50]
+    sample = "\n".join(sample_lines)
     sniffer = csv.Sniffer()
+    counters = Counter({
+        ",": sample.count(","),
+        ";": sample.count(";"),
+        "\t": sample.count("\t"),
+        "|": sample.count("|"),
+    })
     try:
         dialect = sniffer.sniff(sample, delimiters=",;|\t")
-        return dialect.delimiter
+        candidate = dialect.delimiter
     except csv.Error:
-        counters = Counter({
-            ",": sample.count(","),
-            ";": sample.count(";"),
-            "\t": sample.count("\t"),
-            "|": sample.count("|"),
-        })
-        delimiter, occurrences = counters.most_common(1)[0]
-        if occurrences == 0:
-            return ","
-        return delimiter
+        candidate = None
+    if candidate:
+        if candidate == ",":
+            semicolons = counters[";"]
+            commas = counters[","]
+            if semicolons >= max(1, len(sample_lines)) and semicolons >= commas / 1.2:
+                return ";"
+        return candidate
+    delimiter, occurrences = counters.most_common(1)[0]
+    if occurrences == 0:
+        return ","
+    return delimiter
 
 
 def _sanitize_fieldnames(fieldnames: List[str]) -> Tuple[List[str], Dict[str, str]]:
@@ -333,6 +371,72 @@ def _sanitize_fieldnames(fieldnames: List[str]) -> Tuple[List[str], Dict[str, st
     return sanitized, display_map
 
 
+def _contains_alpha(value: str) -> bool:
+    return any(char.isalpha() for char in value)
+
+
+def _looks_numeric(value: str) -> bool:
+    if value is None:
+        return False
+    cleaned = str(value).strip()
+    if not cleaned:
+        return False
+    cleaned = re.sub(r"[.\s]", "", cleaned.replace(",", "").replace("-", ""))
+    return cleaned.isdigit()
+
+
+def _is_data_like_row(row: List[str]) -> bool:
+    if not row:
+        return False
+    numeric_cells = sum(1 for cell in row if _looks_numeric(cell))
+    if numeric_cells / max(len(row), 1) >= 0.5:
+        return True
+    long_digit = any(len(re.sub(r"\D", "", cell)) >= 10 for cell in row if isinstance(cell, str))
+    return long_digit
+
+
+def _detect_header_row_index(rows: List[List[str]]) -> Optional[int]:
+    if not rows:
+        return None
+    sample_lines = [";".join(row) for row in rows[:20]]
+    sniffer = csv.Sniffer()
+    try:
+        if sniffer.has_header("\n".join(sample_lines)):
+            if len(rows) > 1 and _is_data_like_row(rows[0]) and _is_data_like_row(rows[1]):
+                pass
+            else:
+                return 0
+    except csv.Error:
+        pass
+
+    best_idx: Optional[int] = None
+    best_score = 0.0
+    for idx, row in enumerate(rows[:5]):
+        if not row:
+            continue
+        total = len(row)
+        alpha_ratio = sum(1 for cell in row if _contains_alpha(cell)) / max(total, 1)
+        numeric_ratio = sum(1 for cell in row if _looks_numeric(cell)) / max(total, 1)
+        uniqueness = len({cell.strip().lower() for cell in row if cell.strip()}) / max(total, 1)
+        punctuation = sum(1 for cell in row if ":" in cell or "-" in cell) / max(total, 1)
+        score = (alpha_ratio * 0.6) + (uniqueness * 0.3) + (punctuation * 0.1) - (numeric_ratio * 0.4)
+        if alpha_ratio == 0.0:
+            score -= 0.5
+        if _is_data_like_row(row):
+            score -= 0.4
+        if score > best_score:
+            best_score = score
+            best_idx = idx
+
+    if best_idx is not None and best_score >= 0.2:
+        return best_idx
+    return None
+
+
+def _generate_synthetic_headers(width: int) -> List[str]:
+    return [f"column_{index + 1}" for index in range(width)]
+
+
 def _decode_csv_bytes(data: bytes) -> str:
     encodings = ["utf-8-sig", "utf-16", "utf-8", "latin-1"]
     for encoding in encodings:
@@ -343,27 +447,66 @@ def _decode_csv_bytes(data: bytes) -> str:
     return data.decode("utf-8", errors="ignore")
 
 
-def _read_csv_rows(text: str) -> Tuple[List[Dict[str, str]], Dict[str, str]]:
+def _read_csv_rows(text: str) -> Tuple[List[Dict[str, str]], Dict[str, str], Dict[str, object]]:
     if not text:
-        return [], {}
+        return [], {}, {
+            "delimiter": ",",
+            "header_index": None,
+            "synthetic_header": True,
+            "metadata_rows": 0,
+            "column_count": 0,
+            "total_rows_read": 0,
+        }
     delimiter = _detect_csv_delimiter(text)
     buffer = io.StringIO(text)
-    reader = csv.DictReader(buffer, delimiter=delimiter, quotechar='"', skipinitialspace=True)
-    raw_fieldnames = reader.fieldnames or []
-    sanitized_fieldnames, display_map = _sanitize_fieldnames(raw_fieldnames)
-    reader.fieldnames = sanitized_fieldnames
+    csv_reader = csv.reader(buffer, delimiter=delimiter, quotechar='"', skipinitialspace=True)
+    raw_rows: List[List[str]] = []
+    for row in csv_reader:
+        if not row:
+            continue
+        cleaned = [cell.strip() if isinstance(cell, str) else cell for cell in row]
+        if any(cell for cell in cleaned):
+            raw_rows.append(cleaned)
+    if not raw_rows:
+        return [], {}
+
+    header_idx = _detect_header_row_index(raw_rows)
+    if header_idx is None:
+        header = _generate_synthetic_headers(max(len(row) for row in raw_rows))
+        data_rows = raw_rows
+    else:
+        header = raw_rows[header_idx]
+        data_rows = raw_rows[header_idx + 1 :]
+
+    sanitized_fieldnames, display_map = _sanitize_fieldnames(header)
+    if not sanitized_fieldnames:
+        width = max(len(row) for row in data_rows) if data_rows else len(header)
+        header = _generate_synthetic_headers(width)
+        sanitized_fieldnames, display_map = _sanitize_fieldnames(header)
+
+    column_count = len(sanitized_fieldnames)
     rows: List[Dict[str, str]] = []
-    for raw_row in reader:
-        row: Dict[str, str] = {}
-        for key, value in raw_row.items():
-            if key is None:
-                continue
-            if isinstance(value, str):
-                value = value.strip()
-            row[key] = value
-        if any((isinstance(v, str) and v) or (v not in (None, "")) for v in row.values()):
-            rows.append(row)
-    return rows, display_map
+    for raw_row in data_rows:
+        if not raw_row:
+            continue
+        normalized_row = list(raw_row)
+        if len(normalized_row) < column_count:
+            normalized_row.extend([""] * (column_count - len(normalized_row)))
+        elif len(normalized_row) > column_count:
+            normalized_row = normalized_row[:column_count]
+        row_dict = {field: (value.strip() if isinstance(value, str) else value) for field, value in zip(sanitized_fieldnames, normalized_row)}
+        if any((isinstance(value, str) and value) or value not in (None, "") for value in row_dict.values()):
+            rows.append(row_dict)
+    structure_meta = {
+        "delimiter": delimiter,
+        "header_index": header_idx,
+        "synthetic_header": header_idx is None,
+        "metadata_rows": header_idx or 0,
+        "column_count": column_count,
+        "total_rows_read": len(raw_rows),
+        "data_rows": len(rows),
+    }
+    return rows, display_map, structure_meta
 
 
 def _prepare_generic_rows(rows: List[Dict[str, str]]) -> Tuple[List[Dict[str, str]], Dict[str, str]]:
@@ -615,6 +758,227 @@ def _aggregate_totals(rows: List[Dict[str, str]], mapping: Dict[str, str]) -> Di
     return totals
 
 
+def _parse_any_date(value: str) -> Optional[date]:
+    if not value:
+        return None
+    cleaned = str(value).strip()
+    if not cleaned:
+        return None
+    normalized = cleaned.replace("T", " ").replace("Z", "").strip()
+    try:
+        return datetime.fromisoformat(normalized).date()
+    except ValueError:
+        pass
+    candidate = normalized.split(" ")[0]
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(candidate, fmt).date()
+        except ValueError:
+            continue
+    digits_only = re.sub(r"\D", "", cleaned)
+    if len(digits_only) == 8:
+        for fmt in ("%Y%m%d", "%d%m%Y"):
+            try:
+                return datetime.strptime(digits_only, fmt).date()
+            except ValueError:
+                continue
+    return None
+
+
+class _SemanticAnalyzer:
+    def __init__(self, display_map: Dict[str, str], mapping: Dict[str, str]) -> None:
+        self.display_map = display_map
+        self.mapping = mapping
+        self.row_count = 0
+        self.numeric_totals: Dict[str, float] = defaultdict(float)
+        self.numeric_min: Dict[str, float] = {}
+        self.numeric_max: Dict[str, float] = {}
+        self.category_counts: Dict[str, Counter[str]] = {field: Counter() for field in CATEGORICAL_FIELDS}
+        self.category_weighted_totals: Dict[str, Dict[str, float]] = {
+            field: defaultdict(float) for field in VALUE_WEIGHTED_FIELDS
+        }
+        self.timeline_totals: Dict[str, float] = defaultdict(float)
+        self.date_values: List[date] = []
+        self.sample_records: List[Dict[str, object]] = []
+
+    def observe(self, entry: Dict[str, object]) -> None:
+        self.row_count += 1
+        if len(self.sample_records) < 3:
+            self.sample_records.append({key: entry.get(key) for key in entry})
+
+        default_weight = entry.get("produto_valor_total") or entry.get("valor_total_nfe") or 0.0
+        weight = parse_safe_float(default_weight)
+
+        for field in NUMERIC_FIELDS:
+            value = entry.get(field)
+            if value in (None, ""):
+                continue
+            numeric_value = parse_safe_float(value)
+            self.numeric_totals[field] += numeric_value
+            current_min = self.numeric_min.get(field)
+            if current_min is None or numeric_value < current_min:
+                self.numeric_min[field] = numeric_value
+            current_max = self.numeric_max.get(field)
+            if current_max is None or numeric_value > current_max:
+                self.numeric_max[field] = numeric_value
+
+        for field in CATEGORICAL_FIELDS:
+            raw_value = entry.get(field)
+            if not raw_value:
+                continue
+            label = str(raw_value)
+            self.category_counts[field][label] += 1
+            if field in self.category_weighted_totals:
+                self.category_weighted_totals[field][label] += weight
+
+        for field in DATE_FIELDS:
+            date_value = entry.get(field)
+            if not date_value:
+                continue
+            parsed = _parse_any_date(str(date_value))
+            if parsed:
+                self.date_values.append(parsed)
+                self.timeline_totals[parsed.isoformat()] += weight
+
+    def _top_categories(self, field: str) -> List[Dict[str, object]]:
+        counter = self.category_counts.get(field)
+        if not counter:
+            return []
+        return [{"label": label, "count": count} for label, count in counter.most_common(MAX_CHART_ITEMS)]
+
+    def _top_weighted(self, field: str) -> List[Dict[str, object]]:
+        totals = self.category_weighted_totals.get(field)
+        if not totals:
+            return []
+        sorted_totals = sorted(totals.items(), key=lambda item: item[1], reverse=True)[:MAX_CHART_ITEMS]
+        return [{"label": label, "value": round(value, 2)} for label, value in sorted_totals]
+
+    def finalize(self) -> Dict[str, object]:
+        numeric_totals = {
+            field: round(total, 4) for field, total in self.numeric_totals.items() if total not in (0.0, 0)
+        }
+        numeric_ranges = {
+            field: {"min": round(self.numeric_min[field], 4), "max": round(self.numeric_max[field], 4)}
+            for field in self.numeric_min
+        }
+        unique_counts = {
+            field: len(counter) for field, counter in self.category_counts.items() if counter
+        }
+        top_categories = {
+            field: self._top_categories(field)
+            for field, counter in self.category_counts.items()
+            if counter
+        }
+        value_distribution = {
+            field: self._top_weighted(field)
+            for field in VALUE_WEIGHTED_FIELDS
+            if self.category_weighted_totals.get(field)
+        }
+
+        visualizations: List[Dict[str, object]] = []
+        top_products = value_distribution.get("produto_nome") or []
+        if top_products:
+            visualizations.append(
+                {
+                    "type": "bar",
+                    "title": "Top Produtos por Valor",
+                    "labels": [item["label"] for item in top_products],
+                    "values": [item["value"] for item in top_products],
+                    "field": "produto_nome",
+                    "metric": "produto_valor_total",
+                }
+            )
+        top_emitentes = value_distribution.get("emitente_nome") or []
+        if top_emitentes:
+            visualizations.append(
+                {
+                    "type": "bar",
+                    "title": "Top Emitentes por Valor",
+                    "labels": [item["label"] for item in top_emitentes],
+                    "values": [item["value"] for item in top_emitentes],
+                    "field": "emitente_nome",
+                    "metric": "valor_total_nfe",
+                }
+            )
+        if len(self.timeline_totals) >= 2:
+            ordered_timeline = sorted(self.timeline_totals.items())
+            visualizations.append(
+                {
+                    "type": "line",
+                    "title": "Evolução Temporal do Valor",
+                    "labels": [label for label, _ in ordered_timeline],
+                    "values": [round(value, 2) for _, value in ordered_timeline],
+                    "metric": "valor_total",
+                }
+            )
+
+        insights: List[str] = []
+        if top_emitentes:
+            total_emitente = sum(item["value"] for item in top_emitentes)
+            leader = top_emitentes[0]
+            if total_emitente:
+                share = leader["value"] / total_emitente
+                if share >= 0.5:
+                    insights.append(
+                        f"{leader['label']} concentra {share:.0%} do valor total consolidado nas notas processadas."
+                    )
+        if top_products:
+            total_products = sum(item["value"] for item in top_products)
+            leader = top_products[0]
+            if total_products:
+                share = leader["value"] / total_products
+                if share >= 0.4:
+                    insights.append(
+                        f"O produto {leader['label']} representa {share:.0%} do valor movimentado em produtos/serviços."
+                    )
+        if len(self.timeline_totals) >= 2:
+            ordered = sorted(self.timeline_totals.items())
+            first_value = ordered[0][1]
+            last_value = ordered[-1][1]
+            if first_value:
+                variation = (last_value - first_value) / first_value
+                if variation >= 0.15:
+                    insights.append(
+                        f"Há tendência de alta de {variation:.0%} no valor total entre {ordered[0][0]} e {ordered[-1][0]}."
+                    )
+                elif variation <= -0.15:
+                    insights.append(
+                        f"Há tendência de queda de {abs(variation):.0%} no valor total entre {ordered[0][0]} e {ordered[-1][0]}."
+                    )
+
+        temporal_coverage = None
+        if self.date_values:
+            temporal_coverage = {
+                "start": min(self.date_values).isoformat(),
+                "end": max(self.date_values).isoformat(),
+            }
+
+        semantic_summary = {
+            "record_count": self.row_count,
+            "column_count": len(self.display_map),
+            "numeric_totals": numeric_totals,
+            "numeric_ranges": numeric_ranges,
+            "unique_counts": unique_counts,
+            "top_categories": top_categories,
+            "value_distribution": value_distribution,
+        }
+        processing_stats = {
+            "mode": "incremental",
+            "rows_processed": self.row_count,
+            "columns_detected": len(self.display_map),
+            "parallelized": False,
+        }
+
+        return {
+            "semantic_summary": semantic_summary,
+            "visualizations": visualizations,
+            "insights": insights,
+            "processing_stats": processing_stats,
+            "temporal_coverage": temporal_coverage,
+            "sample_records": self.sample_records,
+        }
+
+
 def _convert_tabular_rows(
     rows: List[Dict[str, str]],
     display_map: Dict[str, str],
@@ -627,6 +991,13 @@ def _convert_tabular_rows(
             "column_mapping": {},
             "has_structured_table": False,
             "has_text_only": False,
+            "analysis_scope": "full_document",
+            "processing_stats": {
+                "mode": "incremental",
+                "rows_processed": 0,
+                "columns_detected": len(display_map),
+                "parallelized": False,
+            },
         }
 
     mapping, diagnostics = _infer_column_mapping(rows, display_map)
@@ -635,6 +1006,7 @@ def _convert_tabular_rows(
     unused_columns = [display_map.get(column, column) for column in columns if column not in mapping.values()]
     detection_confidence = {field: info["score"] for field, info in diagnostics.items()}
 
+    analyzer = _SemanticAnalyzer(display_map, mapping)
     result: List[Dict[str, object]] = []
     textual_candidates = [column for column in columns if column not in mapping.values()]
 
@@ -693,6 +1065,7 @@ def _convert_tabular_rows(
             if qty:
                 entry["produto_valor_unit"] = (entry["produto_valor_total"] / qty) if qty else 0.0
 
+        analyzer.observe(entry)
         result.append(entry)
 
     column_mapping = {field: display_map.get(column, column) for field, column in mapping.items()}
@@ -707,7 +1080,12 @@ def _convert_tabular_rows(
         "missing_fields": [field for field in CSV_FIELD_ALIASES.keys() if field not in mapping],
         "has_structured_table": True,
         "has_text_only": False,
+        "analysis_scope": "full_document",
     }
+    semantic_meta = analyzer.finalize()
+    if not semantic_meta.get("temporal_coverage"):
+        semantic_meta.pop("temporal_coverage", None)
+    meta.update(semantic_meta)
 
     return result, meta
 
@@ -861,17 +1239,27 @@ def _parse_csv(path: Path) -> Tuple[List[Dict[str, object]], Optional[str], Dict
         return [], f"Erro ao ler CSV: {exc}", {"source": path.name}
 
     text = _decode_csv_bytes(raw_bytes)
-    rows, display_map = _read_csv_rows(text)
+    rows, display_map, structure_meta = _read_csv_rows(text)
     if not rows:
-        return [], "Nenhuma linha encontrada no CSV.", {
+        empty_meta = {
             "source": path.name,
             "row_count": 0,
             "column_mapping": {},
             "has_structured_table": False,
             "has_text_only": False,
+            "analysis_scope": "full_document",
+            "structure": structure_meta,
+            "processing_stats": {
+                "mode": "incremental",
+                "rows_processed": 0,
+                "columns_detected": structure_meta.get("column_count", 0),
+                "parallelized": False,
+            },
         }
+        return [], "Nenhuma linha encontrada no CSV.", empty_meta
 
     data, meta = _convert_tabular_rows(rows, display_map, path.name)
+    meta["structure"] = structure_meta
     return data, None, meta
 
 
@@ -1019,11 +1407,19 @@ def _summarize_text_document(text: str, source_name: str) -> Tuple[List[Dict[str
         "produto_valor_total": valor_total or 0.0,
     }
 
+    analyzer = _SemanticAnalyzer({key: key for key in entry.keys()}, {key: key for key in entry.keys()})
+    analyzer.observe(entry)
+    semantic_meta = analyzer.finalize()
+    if "processing_stats" in semantic_meta:
+        semantic_meta["processing_stats"]["mode"] = "textual-summary"
+
     meta = {
         "extracted_fields": {key: value for key, value in metadata.items() if value},
         "has_text_only": True,
         "has_structured_table": False,
+        "analysis_scope": "full_document",
     }
+    meta.update(semantic_meta)
     return [entry], meta
 
 
@@ -1198,15 +1594,30 @@ def _handle_zip(path: Path, progress_callback: Optional[ProgressCallback]) -> Li
                     kind = "OCR_TEXT"
                 elif ext == "csv":
                     csv_text = _decode_csv_bytes(data_bytes)
-                    rows, display_map = _read_csv_rows(csv_text)
+                    rows, display_map, structure_meta = _read_csv_rows(csv_text)
                     size = len(data_bytes)
                     kind = "CSV"
                     if rows:
                         data, meta_extra = _convert_tabular_rows(rows, display_map, filename)
+                        meta_extra["structure"] = structure_meta
                         error = None
                     else:
                         data = []
-                        meta_extra = {"source": filename, "row_count": 0, "column_mapping": {}}
+                        meta_extra = {
+                            "source": filename,
+                            "row_count": 0,
+                            "column_mapping": {},
+                            "has_structured_table": False,
+                            "has_text_only": False,
+                            "analysis_scope": "full_document",
+                            "structure": structure_meta,
+                            "processing_stats": {
+                                "mode": "incremental",
+                                "rows_processed": 0,
+                                "columns_detected": structure_meta.get("column_count", 0),
+                                "parallelized": False,
+                            },
+                        }
                         error = "Nenhuma linha encontrada no CSV."
                 else:
                     docs.append(
@@ -1239,9 +1650,33 @@ def _handle_zip(path: Path, progress_callback: Optional[ProgressCallback]) -> Li
     return docs
 
 
+def _process_path(path: Path) -> List[ImportedDoc]:
+    if _get_extension(path) == "zip":
+        return _handle_zip(path, None)
+    return [_handle_single_file(path)]
+
+
 def extract_documents(file_paths: Iterable[str | Path], progress_callback: Optional[ProgressCallback] = None) -> List[ImportedDoc]:
     file_list = [Path(path) for path in file_paths]
     total = len(file_list)
+    if total == 0:
+        return []
+    if total > 1 and progress_callback is None:
+        parallel_docs: List[ImportedDoc] = []
+        with ThreadPoolExecutor(max_workers=min(4, total)) as executor:
+            futures = [(index, executor.submit(_process_path, path)) for index, path in enumerate(file_list)]
+            ordered_results: List[Tuple[int, List[ImportedDoc]]] = []
+            for index, future in futures:
+                ordered_results.append((index, future.result()))
+        ordered_results.sort(key=lambda item: item[0])
+        for _, docs_chunk in ordered_results:
+            parallel_docs.extend(docs_chunk)
+        for doc in parallel_docs:
+            stats = doc.meta.get("processing_stats")
+            if isinstance(stats, dict):
+                stats["parallelized"] = True
+        return parallel_docs
+
     docs: List[ImportedDoc] = []
     for index, path in enumerate(file_list, start=1):
         if progress_callback:
