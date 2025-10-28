@@ -85,6 +85,10 @@ CSV_FIELD_ALIASES: Dict[str, List[str]] = {
     ],
     "valor_total_nfe": [
         "valor total nfe",
+        "valor total nf",
+        "vl total nf",
+        "vl total nfe",
+        "valor nf total",
         "valor total nota",
         "valor nf",
         "valor da nota",
@@ -1140,6 +1144,8 @@ def _convert_tabular_rows(
 
         if entry["valor_total_nfe"] == 0.0 and nfe_id and nfe_id in totals_by_nfe:
             entry["valor_total_nfe"] = totals_by_nfe[nfe_id]
+        if entry["valor_total_nfe"] == 0.0 and entry["produto_valor_total"]:
+            entry["valor_total_nfe"] = entry["produto_valor_total"]
 
         if entry["produto_valor_total"] == 0.0:
             fallback_value = parse_safe_float(row.get(mapping.get("valor_total_nfe", "")))
