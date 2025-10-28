@@ -365,7 +365,11 @@ def _sanitize_fieldnames(fieldnames: List[str]) -> Tuple[List[str], Dict[str, st
     for raw in fieldnames:
         if raw is None:
             continue
-        cleaned = raw.strip()
+        cleaned = raw.strip().lstrip("\ufeff")
+        if cleaned.startswith('"') and cleaned.endswith('"') and len(cleaned) > 1:
+            cleaned = cleaned[1:-1]
+        if cleaned.startswith("'") and cleaned.endswith("'") and len(cleaned) > 1:
+            cleaned = cleaned[1:-1]
         if not cleaned:
             continue
         count = counts.get(cleaned, 0)
@@ -374,6 +378,61 @@ def _sanitize_fieldnames(fieldnames: List[str]) -> Tuple[List[str], Dict[str, st
         sanitized.append(alias)
         display_map[alias] = cleaned
     return sanitized, display_map
+
+
+def _strip_outer_quotes(value: str) -> str:
+    if not isinstance(value, str):
+        return value
+    stripped = value.strip()
+    if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in {'"', "'"}:
+        return stripped[1:-1]
+    return stripped
+
+
+def _detect_number_format(raw_rows: List[List[str]]) -> Dict[str, Optional[str]]:
+    sample_values: List[str] = []
+    for row in raw_rows:
+        for cell in row:
+            if not isinstance(cell, str):
+                continue
+            candidate = cell.strip()
+            if not candidate or len(candidate) < 3:
+                continue
+            if re.search(r"[a-zA-Z]", candidate):
+                continue
+            sample_values.append(candidate)
+        if len(sample_values) >= 200:
+            break
+
+    decimal_counts: Counter[str] = Counter()
+    thousand_counts: Counter[str] = Counter()
+    for value in sample_values:
+        last_comma = value.rfind(",")
+        last_dot = value.rfind(".")
+        if last_comma > last_dot:
+            decimal_counts[","] += 1
+            if "." in value[:last_comma]:
+                thousand_counts["."] += 1
+        elif last_dot > last_comma:
+            decimal_counts["."] += 1
+            if "," in value[:last_dot]:
+                thousand_counts[","] += 1
+        else:
+            if "," in value and re.search(r"\d,\d", value):
+                decimal_counts[","] += 1
+            elif "." in value and re.search(r"\d\.\d", value):
+                decimal_counts["."] += 1
+
+    decimal_sep: Optional[str] = None
+    thousand_sep: Optional[str] = None
+    if decimal_counts:
+        decimal_sep = decimal_counts.most_common(1)[0][0]
+    if thousand_counts:
+        candidate = thousand_counts.most_common(1)[0][0]
+        if candidate != decimal_sep:
+            thousand_sep = candidate
+
+    return {"decimal": decimal_sep, "thousands": thousand_sep}
 
 
 def _contains_alpha(value: str) -> bool:
@@ -442,46 +501,65 @@ def _generate_synthetic_headers(width: int) -> List[str]:
     return [f"column_{index + 1}" for index in range(width)]
 
 
-def _decode_csv_bytes(data: bytes) -> str:
-    encodings = ["utf-8-sig", "utf-16", "utf-8", "latin-1"]
+def _decode_csv_bytes(data: bytes) -> Tuple[str, str]:
+    encodings = ["utf-8-sig", "utf-16", "utf-8", "cp1252", "latin-1"]
     for encoding in encodings:
         try:
-            return data.decode(encoding)
+            return data.decode(encoding), encoding
         except UnicodeDecodeError:
             continue
-    return data.decode("utf-8", errors="ignore")
+    # last resort: ignore errors but preserve bytes; still report utf-8 fallback
+    return data.decode("utf-8", errors="ignore"), "utf-8"
 
 
-def _read_csv_rows(text: str) -> Tuple[List[Dict[str, str]], Dict[str, str], Dict[str, object]]:
+def _read_csv_rows(text: str, *, detected_encoding: Optional[str] = None) -> Tuple[List[Dict[str, str]], Dict[str, str], Dict[str, object]]:
+    base_meta = {
+        "encoding": detected_encoding,
+        "delimiter": ",",
+        "header_index": None,
+        "synthetic_header": True,
+        "metadata_rows": 0,
+        "column_count": 0,
+        "total_rows_read": 0,
+        "data_rows": 0,
+        "decimal": None,
+        "thousands": None,
+    }
     if not text:
-        return [], {}, {
-            "delimiter": ",",
-            "header_index": None,
-            "synthetic_header": True,
-            "metadata_rows": 0,
-            "column_count": 0,
-            "total_rows_read": 0,
-        }
-    delimiter = _detect_csv_delimiter(text)
-    buffer = io.StringIO(text)
-    csv_reader = csv.reader(buffer, delimiter=delimiter, quotechar='"', skipinitialspace=True)
+        return [], {}, base_meta
+
+    normalized_text = text.replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff")
+    delimiter = _detect_csv_delimiter(normalized_text)
+    buffer = io.StringIO(normalized_text)
+    csv_reader = csv.reader(buffer, delimiter=delimiter, quotechar='"', skipinitialspace=True, doublequote=True)
+
     raw_rows: List[List[str]] = []
     for row in csv_reader:
         if not row:
             continue
-        cleaned = [cell.strip() if isinstance(cell, str) else cell for cell in row]
-        if any(cell for cell in cleaned):
-            raw_rows.append(cleaned)
+        cleaned_row: List[str] = []
+        for cell in row:
+            if isinstance(cell, str):
+                cleaned_row.append(_strip_outer_quotes(cell.strip().lstrip("\ufeff")))
+            else:
+                cleaned_row.append(cell)
+        if any(cell for cell in cleaned_row):
+            raw_rows.append(cleaned_row)
+
     if not raw_rows:
-        return [], {}
+        meta = dict(base_meta)
+        meta.update({"delimiter": delimiter})
+        return [], {}, meta
 
     header_idx = _detect_header_row_index(raw_rows)
     if header_idx is None:
         header = _generate_synthetic_headers(max(len(row) for row in raw_rows))
         data_rows = raw_rows
+        metadata_rows = 0
     else:
         header = raw_rows[header_idx]
         data_rows = raw_rows[header_idx + 1 :]
+        metadata_rows = header_idx
 
     sanitized_fieldnames, display_map = _sanitize_fieldnames(header)
     if not sanitized_fieldnames:
@@ -499,19 +577,31 @@ def _read_csv_rows(text: str) -> Tuple[List[Dict[str, str]], Dict[str, str], Dic
             normalized_row.extend([""] * (column_count - len(normalized_row)))
         elif len(normalized_row) > column_count:
             normalized_row = normalized_row[:column_count]
-        row_dict = {field: (value.strip() if isinstance(value, str) else value) for field, value in zip(sanitized_fieldnames, normalized_row)}
-        if any((isinstance(value, str) and value) or value not in (None, "") for value in row_dict.values()):
+
+        row_dict: Dict[str, str] = {}
+        for field, value in zip(sanitized_fieldnames, normalized_row):
+            if isinstance(value, str):
+                cleaned_value = _strip_outer_quotes(value.strip())
+            else:
+                cleaned_value = value
+            row_dict[field] = cleaned_value
+        if any((isinstance(val, str) and val) or val not in (None, "") for val in row_dict.values()):
             rows.append(row_dict)
-    structure_meta = {
+
+    number_format = _detect_number_format(data_rows)
+    meta = {
+        "encoding": detected_encoding,
         "delimiter": delimiter,
         "header_index": header_idx,
         "synthetic_header": header_idx is None,
-        "metadata_rows": header_idx or 0,
+        "metadata_rows": metadata_rows,
         "column_count": column_count,
         "total_rows_read": len(raw_rows),
         "data_rows": len(rows),
+        "decimal": number_format.get("decimal"),
+        "thousands": number_format.get("thousands"),
     }
-    return rows, display_map, structure_meta
+    return rows, display_map, meta
 
 
 def _prepare_generic_rows(rows: List[Dict[str, str]]) -> Tuple[List[Dict[str, str]], Dict[str, str]]:
@@ -1332,8 +1422,8 @@ def _parse_csv(path: Path) -> Tuple[List[Dict[str, object]], Optional[str], Dict
     except OSError as exc:  # pragma: no cover - unexpected filesystem error
         return [], f"Erro ao ler CSV: {exc}", {"source": path.name}
 
-    text = _decode_csv_bytes(raw_bytes)
-    rows, display_map, structure_meta = _read_csv_rows(text)
+    text, encoding = _decode_csv_bytes(raw_bytes)
+    rows, display_map, structure_meta = _read_csv_rows(text, detected_encoding=encoding)
     if not rows:
         empty_meta = {
             "source": path.name,
@@ -1687,8 +1777,8 @@ def _handle_zip(path: Path, progress_callback: Optional[ProgressCallback]) -> Li
                     size = len(data_bytes)
                     kind = "OCR_TEXT"
                 elif ext == "csv":
-                    csv_text = _decode_csv_bytes(data_bytes)
-                    rows, display_map, structure_meta = _read_csv_rows(csv_text)
+                    csv_text, encoding = _decode_csv_bytes(data_bytes)
+                    rows, display_map, structure_meta = _read_csv_rows(csv_text, detected_encoding=encoding)
                     size = len(data_bytes)
                     kind = "CSV"
                     if rows:
