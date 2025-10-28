@@ -4,6 +4,7 @@ import { logger } from '../services/logger';
 
 interface FileUploadProps {
   onStartAnalysis: (files: File[]) => void;
+  onStartDynamicAnalysis: (file: File) => void;
   disabled: boolean;
 }
 
@@ -11,7 +12,7 @@ const FILE_SIZE_LIMIT_MB = 200;
 const FILE_SIZE_LIMIT_BYTES = FILE_SIZE_LIMIT_MB * 1024 * 1024;
 const ACCEPTED_EXTENSIONS = [".xml", ".csv", ".json", ".pdf", ".ocr", ".zip"];
 
-const FileUpload: React.FC<FileUploadProps> = ({ onStartAnalysis, disabled }) => {
+const FileUpload: React.FC<FileUploadProps> = ({ onStartAnalysis, onStartDynamicAnalysis, disabled }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -50,6 +51,21 @@ const FileUpload: React.FC<FileUploadProps> = ({ onStartAnalysis, disabled }) =>
         logger.log('FileUpload', 'WARN', errorMessage, { rejectedFiles });
       }
 
+      if (acceptedFiles.length === 0) {
+        return;
+      }
+
+      // Dynamic analysis trigger
+      if (acceptedFiles.length === 1 && files.length === 0) {
+          const singleFile = acceptedFiles[0];
+          const extension = singleFile.name.split('.').pop()?.toLowerCase();
+          if (extension === 'pdf' || extension === 'csv') {
+              onStartDynamicAnalysis(singleFile);
+              return; // Bypass the batch queue for dynamic analysis
+          }
+      }
+
+      // Batch analysis fallback
       if (acceptedFiles.length > 0) {
         setFiles(prev => [...prev, ...acceptedFiles]);
       }
@@ -79,7 +95,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onStartAnalysis, disabled }) =>
     if (!disabled && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       handleFilesAdded(e.dataTransfer.files);
     }
-  }, [disabled, files]);
+  }, [disabled, files, onStartDynamicAnalysis]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!disabled && e.target.files && e.target.files.length > 0) {
@@ -418,7 +434,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onStartAnalysis, disabled }) =>
               Clique ou arraste novos arquivos
             </p>
             <p className="text-xs text-gray-500 mt-1">
-              Suportados: XML, CSV, JSON, PDF, OCR e ZIP (com documentos XML/CSV/PDF) - limite de {FILE_SIZE_LIMIT_MB}MB
+              Análise rápida para PDF/CSV único. Análise completa para múltiplos arquivos ou ZIP.
             </p>
           </div>
         </label>
@@ -435,7 +451,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onStartAnalysis, disabled }) =>
        {error && <p className="text-xs text-red-400 mt-2 text-center">{error}</p>}
        {files.length > 0 && (
         <div className="mt-4">
-          <h3 className="text-sm font-semibold text-gray-400 mb-2">Fila de processamento:</h3>
+          <h3 className="text-sm font-semibold text-gray-400 mb-2">Fila para análise completa:</h3>
           <ul className="max-h-32 overflow-y-auto space-y-1 pr-2">
             {files.map((file, index) => (
               <li key={index} className="flex items-center justify-between text-xs bg-gray-700/50 p-2 rounded">
@@ -452,7 +468,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onStartAnalysis, disabled }) =>
             disabled={disabled || files.length === 0}
             className="w-full mt-4 bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-4 rounded-lg transition-colors disabled:bg-gray-600 disabled:cursor-not-allowed"
            >
-            Analisar {files.length} Arquivo(s)
+            Analisar {files.length} Arquivo(s) em Lote
            </button>
         </div>
       )}

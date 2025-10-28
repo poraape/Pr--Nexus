@@ -13,6 +13,9 @@ import Dashboard from './components/Dashboard';
 import type { AuditReport } from './types';
 import IncrementalInsights from './components/IncrementalInsights';
 import UnifiedExportContent from './components/UnifiedExportContent';
+import { analysisService, DynamicAnalysisResult } from './services/analysisService';
+import DynamicAnalysisDisplay from './components/DynamicAnalysisDisplay';
+import { LoadingSpinnerIcon } from './components/icons';
 
 export type ExportType = 'md' | 'html' | 'pdf' | 'docx' | 'sped' | 'xlsx' | 'json';
 type PipelineStep = 'UPLOAD' | 'PROCESSING' | 'COMPLETE' | 'ERROR';
@@ -27,11 +30,15 @@ const App: React.FC = () => {
     const [processedFiles, setProcessedFiles] = useState<File[]>([]);
     const [isPanelCollapsed, setIsPanelCollapsed] = useState(false);
 
+    // State for new dynamic analysis
+    const [dynamicAnalysisResult, setDynamicAnalysisResult] = useState<DynamicAnalysisResult | null>(null);
+    const [isDynamicAnalysisLoading, setIsDynamicAnalysisLoading] = useState<boolean>(false);
+    const [dynamicAnalysisError, setDynamicAnalysisError] = useState<string | null>(null);
 
     const {
         agentStates,
         auditReport,
-        setAuditReport, // from useAgentOrchestrator
+        setAuditReport,
         messages,
         isStreaming,
         error,
@@ -52,13 +59,12 @@ const App: React.FC = () => {
         }
     }, [auditReport]);
 
-
     const exportContentRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         if (isPipelineRunning) {
             setPipelineStep('PROCESSING');
-            setActiveView('report'); // Reset to report view on new run
+            setActiveView('report');
         }
     }, [isPipelineRunning]);
 
@@ -72,6 +78,24 @@ const App: React.FC = () => {
         setIsPanelCollapsed(false);
         setProcessedFiles(files);
         runPipeline(files);
+    };
+
+    const handleStartDynamicAnalysis = async (file: File) => {
+        setIsDynamicAnalysisLoading(true);
+        setDynamicAnalysisError(null);
+        setDynamicAnalysisResult(null);
+        setPipelineStep('PROCESSING');
+
+        try {
+            const result = await analysisService.analyzeFile(file);
+            setDynamicAnalysisResult(result);
+            setPipelineStep('COMPLETE');
+        } catch (err: any) {
+            setDynamicAnalysisError(err.message || 'Ocorreu um erro desconhecido durante a análise dinâmica.');
+            setPipelineStep('ERROR');
+        } finally {
+            setIsDynamicAnalysisLoading(false);
+        }
     };
 
     const handleIncrementalUpload = (newFiles: File[]) => {
@@ -99,6 +123,10 @@ const App: React.FC = () => {
         setAuditReport(null);
         setProcessedFiles([]);
         resetOrchestrator();
+        // Reset dynamic analysis state
+        setDynamicAnalysisResult(null);
+        setDynamicAnalysisError(null);
+        setIsDynamicAnalysisLoading(false);
     };
 
     const handleExport = async (type: ExportType) => {
@@ -156,22 +184,41 @@ const App: React.FC = () => {
             case 'UPLOAD':
                 return (
                     <div className="max-w-2xl mx-auto">
-                        <FileUpload onStartAnalysis={handleStartAnalysis} disabled={isPipelineRunning} />
+                        <FileUpload 
+                            onStartAnalysis={handleStartAnalysis} 
+                            onStartDynamicAnalysis={handleStartDynamicAnalysis}
+                            disabled={isPipelineRunning || isDynamicAnalysisLoading} 
+                        />
                     </div>
                 );
             case 'PROCESSING':
+                if (isDynamicAnalysisLoading) {
+                    return (
+                        <div className="flex flex-col items-center justify-center text-center text-gray-400">
+                            <LoadingSpinnerIcon className="w-12 h-12 animate-spin text-blue-500" />
+                            <p className="mt-4 text-lg font-semibold">Analisando documento...</p>
+                            <p className="text-sm">Aguarde enquanto a IA processa e interpreta o arquivo.</p>
+                        </div>
+                    );
+                }
                 return (
                     <div className="max-w-4xl mx-auto">
                         <ProgressTracker agentStates={agentStates} />
                     </div>
                 );
             case 'COMPLETE':
+                if (dynamicAnalysisResult) {
+                    return (
+                        <div className="max-w-4xl mx-auto">
+                            <DynamicAnalysisDisplay result={dynamicAnalysisResult} />
+                        </div>
+                    );
+                }
                 if (!auditReport) return null;
                 return (
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 items-start">
                         <div className={`flex-col gap-6 lg:gap-8 ${isPanelCollapsed ? 'hidden' : 'flex'}`}>
-                            {/* View Switcher */}
-                             <div className="flex items-center gap-2 bg-gray-800 p-1.5 rounded-lg">
+                            <div className="flex items-center gap-2 bg-gray-800 p-1.5 rounded-lg">
                                 <button onClick={() => setActiveView('report')} className={`flex-1 py-2 px-4 rounded-md text-sm font-semibold transition-colors ${activeView === 'report' ? 'bg-blue-600 text-white' : 'hover:bg-gray-700'}`}>
                                     Relatório de Análise
                                 </button>
@@ -211,7 +258,8 @@ const App: React.FC = () => {
                     </div>
                 );
             case 'ERROR':
-                return <PipelineErrorDisplay onReset={handleReset} errorMessage={error} />;
+                const errorMessage = dynamicAnalysisError || error;
+                return <PipelineErrorDisplay onReset={handleReset} errorMessage={errorMessage} />;
             default:
                 return null;
         }

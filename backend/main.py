@@ -3,6 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+
+os.environ["ANONYMIZED_TELEMETRY"] = "false"
+
 logging.basicConfig(level=logging.INFO)
 from pathlib import Path
 

@@ -4,6 +4,8 @@ import json
 import logging
 import os
 import uuid
+from pathlib import Path
+import tempfile
 from typing import Any, Dict, Iterable, List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
@@ -12,6 +14,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.orm import Session
 
 from backend.agents.consultant_agent import ConsultantAgent, ConsultantAgentError
+from backend.agents.dynamic_analysis_agent import DynamicAnalysisAgent
 from backend.core.config import get_settings
 from backend.database import get_session
 from backend.database.models import Task
@@ -46,6 +49,8 @@ else:  # pragma: no cover - only used in constrained test environments
         logger.info("Consultant agent instantiated in disabled mode (likely using test stub).")
     except Exception:  # pragma: no cover - defensive fallback
         _agent = None
+
+_dynamic_analyzer = DynamicAnalysisAgent(llm_client=_llm_client) if _llm_client else None
 _storage = FileStorage(_settings.storage_path)
 _status_repository = SQLAlchemyStatusRepository()
 _report_repository = SQLAlchemyReportRepository()
@@ -343,3 +348,40 @@ async def update_classification(task_id: uuid.UUID, payload: ClassificationUpdat
     task.report.content = content
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+@router.post("/analyze/dynamic", tags=["analysis"])
+async def analyze_dynamic_document(file: UploadFile = File(...)):
+    """
+    Analyzes a single PDF or CSV file dynamically using an LLM agent.
+    This is a synchronous endpoint that returns the full analysis.
+    """
+    if _dynamic_analyzer is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Dynamic analyzer is not available.")
+
+    # Ensure the file is a supported type
+    if file.content_type not in ["application/pdf", "text/csv", "application/vnd.ms-excel"]:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=f"Unsupported file type: {file.content_type}. Please upload a PDF or CSV.")
+
+    # Save the uploaded file to a temporary file
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename).suffix) as tmp:
+            tmp.write(await file.read())
+            tmp_path = tmp.name
+        
+        # Run the analysis
+        analysis_result = _dynamic_analyzer.analyze_document(tmp_path)
+        
+        return JSONResponse(content=analysis_result)
+
+    except (FileNotFoundError, ValueError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        # Re-raise HTTP exceptions from deeper layers
+        raise
+    except Exception as e:
+        logger.exception(f"Unexpected error during dynamic analysis of {file.filename}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An internal error occurred: {e}")
+    finally:
+        # Clean up the temporary file
+        if 'tmp_path' in locals() and os.path.exists(tmp_path):
+            os.remove(tmp_path)
