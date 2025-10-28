@@ -806,6 +806,9 @@ def _infer_column_mapping(
     def collect_values(column: str) -> List[Optional[str]]:
         return [row.get(column) for row in rows]
 
+    def _header_contains_any(header: str, tokens: Iterable[str]) -> bool:
+        return any(token in header for token in tokens)
+
     # Value-driven inference for missing fields
     inference_rules: Dict[str, Callable[[str, List[Optional[str]]], float]] = {
         "nfe_id": lambda header, values: (_score_access_key_column(values) * 0.7)
@@ -816,11 +819,26 @@ def _infer_column_mapping(
             + (_score_reasonable_amount(values) * 0.6)
             - (_score_access_key_column(values) * 0.7)
         ),
-        "produto_valor_total": lambda header, values: _score_numeric_column(values, header + " item" if "item" in header or "produto" in header else header),
-        "produto_valor_unit": lambda header, values: _score_numeric_column(values, header + " unit"),
-        "produto_qtd": lambda header, values: _score_numeric_column(values, header + " qtd"),
-        "produto_cfop": lambda header, values: _score_cfop_column(values),
-        "produto_ncm": lambda header, values: _score_ncm_column(values),
+        "produto_valor_total": lambda header, values: (
+            _score_numeric_column(values, header + " item")
+            if (
+                "valor" in header and _header_contains_any(header, ["item", "produto"])
+                or _header_contains_any(header, ["valor item", "valor produto", "total item", "total produto"])
+            )
+            else 0.0
+        ),
+        "produto_valor_unit": lambda header, values: (
+            _score_numeric_column(values, header + " unit")
+            if "valor" in header and _header_contains_any(header, ["unit", "unitario", "unitaria"])
+            else 0.0
+        ),
+        "produto_qtd": lambda header, values: (
+            _score_numeric_column(values, header + " qtd")
+            if _header_contains_any(header, ["quant", "qtd"])
+            else 0.0
+        ),
+        "produto_cfop": lambda header, values: _score_cfop_column(values) if "cfop" in header else 0.0,
+        "produto_ncm": lambda header, values: _score_ncm_column(values) if "ncm" in header else 0.0,
         "emitente_cnpj": lambda header, values: _score_cnpj_column(values),
         "destinatario_cnpj": lambda header, values: _score_cnpj_column(values),
         "emitente_uf": lambda header, values: _score_uf_column(values),
