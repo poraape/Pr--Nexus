@@ -967,22 +967,26 @@ def _textual_quality_score(value: str) -> int:
 
 def _guess_textual_value(row: Dict[str, str], candidates: List[str], display_map: Dict[str, str]) -> Optional[str]:
     preferred: List[Tuple[int, str]] = []
+    secondary: List[Tuple[int, str]] = []
     for column in candidates:
         value = row.get(column)
         if not _is_valid_textual(value):
             continue
         header = _normalize_text(display_map.get(column, column))
-        if not header:
+        if header and _should_ignore_textual_header(header):
             continue
-        if _should_ignore_textual_header(header):
-            continue
-        if _is_preferred_description_header(header):
-            score = _textual_quality_score(str(value))
+        score = _textual_quality_score(str(value))
+        if header and _is_preferred_description_header(header):
             preferred.append((score, str(value)))
+        else:
+            secondary.append((score, str(value)))
 
     if preferred:
         preferred.sort(key=lambda item: item[0], reverse=True)
         return preferred[0][1]
+    if secondary:
+        secondary.sort(key=lambda item: item[0], reverse=True)
+        return secondary[0][1]
     return None
 
 
